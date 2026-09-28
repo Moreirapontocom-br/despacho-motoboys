@@ -485,6 +485,7 @@ PAGINA_HTML = r"""<!DOCTYPE html>
  .num{background:#2563eb;color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:bold;border:2px solid #fff}
  .rest{background:#10b981}
  .acoes{display:flex;gap:6px;flex-shrink:0}
+ .completa{display:inline-block;margin-left:8px;background:#10b981;color:#fff;padding:6px 10px;border-radius:6px;text-decoration:none}
  #paradas a.sec{background:#6b7280}
 </style>
 </head>
@@ -521,6 +522,12 @@ function desenhar(dados) {
   camada.clearLayers(); lista.innerHTML = "";
   if (!dados.paradas.length) { msg.textContent = "Nenhuma rota no momento. Esta página atualiza sozinha."; return; }
   msg.textContent = dados.paradas.length + " parada(s) na sua rota:";
+  const ll = (x) => x.lat + "," + x.lng;
+  const ps = dados.paradas.slice(0, 10);
+  const meio = ps.slice(0, -1).map(ll).join("|");
+  const rc = document.createElement("a"); rc.textContent = "Rota completa no Maps (saindo do restaurante)"; rc.target = "_blank"; rc.className = "completa";
+  rc.href = "https://www.google.com/maps/dir/?api=1&origin=" + ll(dados.restaurante) + "&destination=" + ll(ps[ps.length - 1]) + (meio ? "&waypoints=" + encodeURIComponent(meio) : "");
+  msg.append(" ", rc);
   const r = dados.restaurante, pontos = [[r.lat, r.lng]];
   L.marker([r.lat, r.lng], {icon: icone("R", "rest")}).addTo(camada);
   dados.paradas.forEach((p, i) => {
