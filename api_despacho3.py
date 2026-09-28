@@ -498,6 +498,8 @@ PAGINA_HTML = r"""<!DOCTYPE html>
  header{padding:12px 16px;background:#1f2937;color:#fff;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
  header input{padding:6px;border-radius:6px;border:0}
  header button{padding:6px 12px;border:0;border-radius:6px;background:#10b981;color:#fff}
+ #modo{padding:8px 16px;background:#e5e7eb}
+ #modo select{padding:6px;border-radius:6px;font-size:1rem}
  #mapa{height:50vh}
  #msg{padding:12px 16px}
  #paradas{list-style:none;margin:0;padding:0 8px 8px}
@@ -519,6 +521,7 @@ PAGINA_HTML = r"""<!DOCTYPE html>
  <input id="codigo" type="password" size="8" placeholder="código">
  <button id="ir">Ver rota</button>
 </header>
+<div id="modo">Saindo de: <select id="sel"><option value="rest">do restaurante</option><option value="rua">da minha posição</option></select></div>
 <div id="mapa"></div>
 <div id="msg"></div>
 <ul id="paradas"></ul>
@@ -534,6 +537,10 @@ const mapa = L.map("mapa").setView([-19.6156, -43.2258], 14);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom: 19, attribution: "&copy; OpenStreetMap"}).addTo(mapa);
 const camada = L.layerGroup().addTo(mapa);
 let ultimo = "";
+let modo = "rest";
+try { if (localStorage.getItem("modo") === "rua") modo = "rua"; } catch (e) {}
+const sel = document.getElementById("sel"); sel.value = modo;
+sel.onchange = () => { modo = sel.value; try { localStorage.setItem("modo", modo); } catch (e) {} ultimo = ""; atualizar(); };
 
 function icone(texto, classe) {
   return L.divIcon({className: "", html: '<div class="num ' + (classe || "") + '">' + texto + "</div>", iconSize: [26, 26]});
@@ -548,9 +555,10 @@ function desenhar(dados) {
   const ll = (x) => x.lat + "," + x.lng;
   const ps = dados.paradas.slice(0, 10);
   const origem = encodeURIComponent(dados.restaurante.endereco || ll(dados.restaurante));
+  const pOrigem = modo === "rua" ? "" : "&origin=" + origem;
   const meio = ps.slice(0, -1).map((x) => x.endereco).join("|");
-  const rc = document.createElement("a"); rc.textContent = "Rota completa no Maps (saindo do restaurante)"; rc.target = "_blank"; rc.className = "completa";
-  rc.href = "https://www.google.com/maps/dir/?api=1&origin=" + origem + "&destination=" + encodeURIComponent(ps[ps.length - 1].endereco) + (meio ? "&waypoints=" + encodeURIComponent(meio) : "");
+  const rc = document.createElement("a"); rc.textContent = modo === "rua" ? "Rota completa no Maps (da minha posição)" : "Rota completa no Maps (saindo do restaurante)"; rc.target = "_blank"; rc.className = "completa";
+  rc.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + encodeURIComponent(ps[ps.length - 1].endereco) + (meio ? "&waypoints=" + encodeURIComponent(meio) : "");
   msg.append(" ", rc);
   const r = dados.restaurante, pontos = [[r.lat, r.lng]];
   L.marker([r.lat, r.lng], {icon: icone("R", "rest")}).addTo(camada);
@@ -560,9 +568,9 @@ function desenhar(dados) {
     const li = document.createElement("li");
     const t = document.createElement("span"); t.textContent = (i + 1) + ". " + p.id + " - " + p.endereco;
     const a = document.createElement("a"); a.textContent = "Navegar"; a.target = "_blank";
-    a.href = "https://www.google.com/maps/dir/?api=1&origin=" + origem + "&destination=" + encodeURIComponent(p.endereco);
+    a.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + encodeURIComponent(p.endereco);
     const b = document.createElement("a"); b.textContent = "Pelo ponto"; b.target = "_blank"; b.className = "sec";
-    b.href = "https://www.google.com/maps/dir/?api=1&origin=" + origem + "&destination=" + p.lat + "," + p.lng;
+    b.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + p.lat + "," + p.lng;
     const e = document.createElement("button"); e.textContent = "Entregue"; e.className = "ent";
     e.onclick = async () => {
       if (!confirm("Marcar como entregue?\n" + p.endereco)) return;
