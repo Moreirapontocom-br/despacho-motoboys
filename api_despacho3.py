@@ -368,7 +368,7 @@ async function criarPedido(c, botao) {
   botao.disabled = true;
   const id = "P" + Date.now().toString(36).toUpperCase();
   try {
-    await api("/pedidos", "POST", {id: id, endereco: textoDigitado, lat: c.lat, lng: c.lng});
+    await api("/pedidos", "POST", {id: id, endereco: textoDigitado + ", " + $("cidade").value.trim(), lat: c.lat, lng: c.lng});
     dizer($("msgBusca"), "Pedido " + id + " criado.", "ok");
     $("candidatos").innerHTML = ""; $("endereco").value = "";
     carregarFila();
@@ -453,6 +453,8 @@ PAGINA_HTML = r"""<!DOCTYPE html>
  #paradas a{background:#2563eb;color:#fff;padding:6px 10px;border-radius:6px;text-decoration:none}
  .num{background:#2563eb;color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:bold;border:2px solid #fff}
  .rest{background:#10b981}
+ .acoes{display:flex;gap:6px;flex-shrink:0}
+ #paradas a.sec{background:#6b7280}
 </style>
 </head>
 <body>
@@ -496,8 +498,11 @@ function desenhar(dados) {
     const li = document.createElement("li");
     const t = document.createElement("span"); t.textContent = (i + 1) + ". " + p.id + " - " + p.endereco;
     const a = document.createElement("a"); a.textContent = "Navegar"; a.target = "_blank";
-    a.href = "https://www.google.com/maps/dir/?api=1&destination=" + p.lat + "," + p.lng;
-    li.append(t, a); lista.append(li);
+    a.href = "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(p.endereco);
+    const b = document.createElement("a"); b.textContent = "Ponto"; b.target = "_blank"; b.className = "sec";
+    b.href = "https://www.google.com/maps/dir/?api=1&destination=" + p.lat + "," + p.lng;
+    const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(a, b);
+    li.append(t, acoes); lista.append(li);
   });
   L.polyline(pontos, {color: "#2563eb"}).addTo(camada);
   mapa.fitBounds(pontos, {padding: [30, 30]});
