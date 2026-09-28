@@ -63,8 +63,19 @@ with engine.begin() as con:
             id TEXT PRIMARY KEY,
             codigo TEXT NOT NULL,
             lat DOUBLE PRECISION NOT NULL,
-            lng DOUBLE PRECISION NOT NULL
+            lng DOUBLE PRECISION NOT NULL,
+            ativo BOOLEAN NOT NULL DEFAULT TRUE
         )"""))
+
+# Migração: bancos criados por uma versão anterior deste código não têm a coluna 'ativo'.
+# Fica numa transação própria: se a coluna já existir, o erro não afeta o resto da inicialização.
+try:
+    with engine.begin() as con:
+        con.execute(text("ALTER TABLE motoboys ADD COLUMN ativo BOOLEAN NOT NULL DEFAULT TRUE"))
+except Exception:
+    pass
+
+with engine.begin() as con:
     con.execute(text("""
         CREATE TABLE IF NOT EXISTS pedidos (
             id TEXT PRIMARY KEY,
@@ -281,7 +292,7 @@ def listar_motoboys():
     """Lista os motoboys (sem os códigos) e quantas paradas cada um tem em aberto."""
     with engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT m.id, (SELECT COUNT(*) FROM pedidos p WHERE p.motoboy_id = m.id AND p.status = 'despachado') AS paradas "
+            "SELECT m.id, m.ativo, (SELECT COUNT(*) FROM pedidos p WHERE p.motoboy_id = m.id AND p.status = 'despachado') AS paradas "
             "FROM motoboys m ORDER BY m.id"))]
     return {"motoboys": linhas, "centro": RESTAURANTE}
 
@@ -299,6 +310,21 @@ def remover_motoboy(motoboy_id: str):
     return {"mensagem": "Motoboy removido", "pedidos_devolvidos": devolvidos}
 
 
+class Turno(BaseModel):
+    ativo: bool
+
+
+@app.post("/motoboys/{motoboy_id}/turno", dependencies=[Depends(exigir_chave)])
+def definir_turno(motoboy_id: str, t: Turno):
+    """Liga ou desliga o motoboy. Desligar não mexe nas paradas que ele já tem;
+    para devolvê-las à fila, use remover ou o botão Entregue de cada uma."""
+    with engine.begin() as con:
+        r = con.execute(text("UPDATE motoboys SET ativo = :a WHERE id = :id"), {"a": t.ativo, "id": motoboy_id})
+        if r.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Motoboy não encontrado")
+    return {"mensagem": "Turno atualizado"}
+
+
 @app.post("/despachar", dependencies=[Depends(exigir_chave)])
 def despachar():
     """Agrupa os pedidos pendentes, monta as rotas e distribui entre os motoboys.
@@ -307,9 +333,11 @@ def despachar():
     with engine.begin() as con:
         pedidos = [dict(r._mapping) for r in con.execute(text(
             "SELECT id, endereco, lat, lng FROM pedidos WHERE status = 'pendente' ORDER BY criado_em, id"))]
-        motoboys = [dict(r._mapping) for r in con.execute(text("SELECT id, lat, lng FROM motoboys"))]
-        if not pedidos or not motoboys:
-            return {"mensagem": "Sem pedidos ou motoboys suficientes para despachar."}
+        motoboys = [dict(r._mapping) for r in con.execute(text("SELECT id, lat, lng FROM motoboys WHERE ativo"))]
+        if not pedidos:
+            return {"mensagem": "Não há pedidos pendentes para despachar."}
+        if not motoboys:
+            return {"mensagem": "Nenhum motoboy de turno agora. Ligue o turno de alguém no painel."}
 
         existentes = {r[0]: (r[1], r[2]) for r in con.execute(text(
             "SELECT motoboy_id, COUNT(*), COALESCE(MAX(ordem), 0) FROM pedidos "
@@ -424,6 +452,7 @@ PAINEL_HTML = r"""<!DOCTYPE html>
  input{padding:8px;border-radius:6px;border:1px solid #ccc;font-size:1rem}
  button{padding:8px 14px;border:0;border-radius:6px;background:#2563eb;color:#fff;font-size:1rem;cursor:pointer}
  button.verde{background:#10b981} button:disabled{opacity:.5}
+ button.cinza{background:#6b7280} button.on{background:#10b981} button.off{background:#9ca3af}
  .linha{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
  .linha input{flex:1;min-width:160px}
  ul{list-style:none;margin:0;padding:0}
@@ -474,7 +503,7 @@ PAINEL_HTML = r"""<!DOCTYPE html>
    <input id="motoCodigo" placeholder="Código (mínimo 6)">
    <button id="salvarMoto">Salvar motoboy</button>
   </div>
-  <div style="font-size:.9rem;color:#555">Nome já existente: o código dele é trocado. O nome vale com maiúsculas e minúsculas.</div>
+  <div style="font-size:.9rem;color:#555">Nome já existente: o código dele é trocado. O nome vale com maiúsculas e minúsculas. Motoboy novo entra "De turno".</div>
   <div id="msgMoto" style="word-break:break-all"></div>
  </section>
 </main>
@@ -592,13 +621,20 @@ async function carregarMotos() {
     r.motoboys.forEach((m) => {
       const li = document.createElement("li");
       const t = document.createElement("span"); t.textContent = m.id + " (" + m.paradas + " parada(s) em aberto)";
-      const b = document.createElement("button"); b.textContent = "Remover"; b.style.background = "#b91c1c";
+      const acoes = document.createElement("div"); acoes.className = "acoes";
+      const g = document.createElement("button"); g.className = m.ativo ? "on" : "off"; g.textContent = m.ativo ? "De turno" : "Fora de turno";
+      g.onclick = async () => {
+        g.disabled = true;
+        try { await api("/motoboys/" + encodeURIComponent(m.id) + "/turno", "POST", {ativo: !m.ativo}); carregarMotos(); }
+        catch (e) { dizer($("msgMoto"), e.message, "erro"); g.disabled = false; }
+      };
+      const b = document.createElement("button"); b.textContent = "Remover"; b.className = "cinza"; b.style.background = "#b91c1c";
       b.onclick = async () => {
         if (!confirm("Remover " + m.id + "?" + (m.paradas ? "\nAs " + m.paradas + " parada(s) dele voltam para a fila." : ""))) return;
         try { await api("/motoboys/" + encodeURIComponent(m.id), "DELETE"); dizer($("msgMoto"), m.id + " removido.", "ok"); carregarMotos(); carregarFila(); }
         catch (e) { dizer($("msgMoto"), e.message, "erro"); }
       };
-      li.append(t, b); ul.append(li);
+      acoes.append(g, b); li.append(t, acoes); ul.append(li);
     });
   } catch (e) { dizer($("msgMoto"), e.message, "erro"); }
 }
