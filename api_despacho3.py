@@ -4,6 +4,7 @@ API de despacho automático de motoboys - versão 3 (com banco de dados e segura
 Variáveis de ambiente (configuradas no painel do Render, nunca dentro do código):
     DATABASE_URL  endereço do banco Postgres. Se não existir, usa um arquivo
                   SQLite local (só para testes no seu computador).
+    RESTAURANTE_LAT / RESTAURANTE_LNG  (opcionais) local do restaurante.
     API_KEY       chave secreta exigida em /pedidos, /motoboys, /despachar e /status.
                   Deve ser enviada no cabeçalho  X-API-Key.
 
@@ -27,7 +28,16 @@ from sqlalchemy import create_engine, text
 
 app = FastAPI(title="API de Despacho Automático")
 
-RESTAURANTE = {"lat": -19.6156, "lng": -43.2258}
+def _coord(nome, padrao):
+    """Lê uma coordenada das variáveis de ambiente (aceita vírgula ou ponto decimal)."""
+    try:
+        return float(os.environ.get(nome, "").strip().replace(",", ".") or padrao)
+    except ValueError:
+        return padrao
+
+
+# Local do restaurante. Para mudar, defina RESTAURANTE_LAT e RESTAURANTE_LNG no Render.
+RESTAURANTE = {"lat": _coord("RESTAURANTE_LAT", -19.6156), "lng": _coord("RESTAURANTE_LNG", -43.2258)}
 API_KEY = os.environ.get("API_KEY", "")
 
 # ---------------------------------------------------------------------
