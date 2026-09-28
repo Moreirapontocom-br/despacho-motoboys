@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
@@ -51,20 +51,33 @@ API_KEY = os.environ.get("API_KEY", "")
 # Passado esse tempo, volta a usar a posição do cadastro dele.
 GPS_VALIDADE_MIN = int(_coord("GPS_VALIDADE_MIN", 10))
 
+# Fuso horário do restaurante, em horas de diferença para o UTC (o banco guarda tudo em UTC).
+# O Brasil não tem mais horário de verão desde 2019, então um número fixo é suficiente.
+# Para mudar (outro estado, por exemplo), crie TIMEZONE_OFFSET_HORAS no Render.
+TIMEZONE_OFFSET_HORAS = _coord("TIMEZONE_OFFSET_HORAS", -3)
+
+
+def _parse_ts(v):
+    """Converte um horário vindo do banco (datetime já pronto, ou texto no caso do
+    SQLite de testes/uso local) para um datetime em UTC ingênuo (sem timezone)."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        v = datetime.fromisoformat(v.replace(" ", "T", 1))
+    if v.tzinfo:
+        v = v.astimezone(timezone.utc).replace(tzinfo=None)
+    return v
+
 
 def _gps_recente(gps_em):
     """True se o horário do último GPS (vindo do banco) está dentro da validade.
-    O SQLite de testes/uso local devolve esse campo como texto, não como data;
-    por isso o texto é convertido primeiro. Tolera pequenas diferenças de fuso
-    entre bancos: se a conta der negativa (relógio do banco à frente), ainda
-    considera recente."""
-    if gps_em is None:
+    Tolera pequenas diferenças de fuso entre bancos: se a conta der negativa
+    (relógio do banco um pouco à frente), ainda considera recente."""
+    t = _parse_ts(gps_em)
+    if t is None:
         return False
     try:
-        if isinstance(gps_em, str):
-            gps_em = datetime.fromisoformat(gps_em.replace(" ", "T", 1))
-        agora = datetime.now(timezone.utc) if gps_em.tzinfo else datetime.utcnow()
-        return abs((agora - gps_em).total_seconds()) <= GPS_VALIDADE_MIN * 60
+        return abs((datetime.utcnow() - t).total_seconds()) <= GPS_VALIDADE_MIN * 60
     except Exception:
         return False
 
@@ -112,8 +125,15 @@ with engine.begin() as con:
             status TEXT NOT NULL DEFAULT 'pendente',
             motoboy_id TEXT,
             ordem INTEGER,
-            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            concluido_em TIMESTAMP
         )"""))
+
+try:
+    with engine.begin() as con:
+        con.execute(text("ALTER TABLE pedidos ADD COLUMN concluido_em TIMESTAMP"))
+except Exception:
+    pass
 
 
 # ---------------------------------------------------------------------
@@ -415,6 +435,36 @@ def status():
     return {"pedidos_por_status": por_status, "motoboys_cadastrados": motoboys}
 
 
+@app.get("/resumo", dependencies=[Depends(exigir_chave)])
+def resumo():
+    """Números do dia para o painel: pendentes, em rota, entregues hoje e o tempo
+    médio entre o pedido ser criado e ser marcado como entregue. "Hoje" usa o
+    fuso do restaurante (TIMEZONE_OFFSET_HORAS), não o horário do banco (UTC).
+    Pedidos entregues antes desta atualização não têm concluido_em salvo e por
+    isso não entram na conta de "hoje" nem na média, mesmo que tenham sido
+    entregues no dia — só afeta o dia da migração, não o uso normal depois dela."""
+    agora_local = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET_HORAS)
+    inicio_local = agora_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    inicio_utc = inicio_local - timedelta(hours=TIMEZONE_OFFSET_HORAS)
+    with engine.connect() as con:
+        pendentes = con.execute(text("SELECT COUNT(*) FROM pedidos WHERE status = 'pendente'")).scalar()
+        em_rota = con.execute(text("SELECT COUNT(*) FROM pedidos WHERE status = 'despachado'")).scalar()
+        linhas = con.execute(text(
+            "SELECT criado_em, concluido_em FROM pedidos WHERE status = 'concluido' AND concluido_em IS NOT NULL")).all()
+    entregues_hoje, soma_minutos = 0, 0.0
+    for criado, concluido in linhas:
+        concluido_t = _parse_ts(concluido)
+        if concluido_t is None or concluido_t < inicio_utc:
+            continue
+        entregues_hoje += 1
+        criado_t = _parse_ts(criado)
+        if criado_t is not None:
+            soma_minutos += (concluido_t - criado_t).total_seconds() / 60
+    tempo_medio_min = round(soma_minutos / entregues_hoje, 1) if entregues_hoje else None
+    return {"pendentes": pendentes, "em_rota": em_rota, "entregues_hoje": entregues_hoje,
+            "tempo_medio_min": tempo_medio_min}
+
+
 # ---------------------------------------------------------------------
 # Painel do restaurante (protegido pela API_KEY digitada na própria página)
 # ---------------------------------------------------------------------
@@ -510,6 +560,9 @@ PAINEL_HTML = r"""<!DOCTYPE html>
  li:first-child{border-top:0}
  .tag{font-size:.8rem;padding:2px 8px;border-radius:10px;background:#e5e7eb;white-space:nowrap}
  .ok{color:#047857} .erro{color:#b91c1c}
+ .cartoes{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+ .cartao{background:#f5f5f5;border-radius:8px;padding:10px;text-align:center}
+ .cartao .num{font-size:1.6rem;font-weight:700} .cartao .rot{font-size:.8rem;color:#555}
 </style>
 </head>
 <body>
@@ -519,6 +572,15 @@ PAINEL_HTML = r"""<!DOCTYPE html>
  <button id="salvar">Entrar</button>
 </header>
 <main>
+ <section>
+  <h2>Resumo de hoje</h2>
+  <div class="cartoes" id="resumo">
+   <div class="cartao"><div class="num" id="rPendentes">—</div><div class="rot">Pendentes</div></div>
+   <div class="cartao"><div class="num" id="rEmRota">—</div><div class="rot">Em rota</div></div>
+   <div class="cartao"><div class="num" id="rEntregues">—</div><div class="rot">Entregues hoje</div></div>
+   <div class="cartao"><div class="num" id="rTempo">—</div><div class="rot">Tempo médio</div></div>
+  </div>
+ </section>
  <section>
   <h2>1. Novo pedido</h2>
   <div class="linha">
@@ -577,7 +639,7 @@ async function api(caminho, metodo, corpo) {
 
 function dizer(el, texto, classe) { el.textContent = texto; el.className = classe || ""; }
 
-$("salvar").onclick = () => { chave = $("chave").value.trim(); sessionStorage.setItem("chave", chave); carregarFila(); carregarMotos(); };
+$("salvar").onclick = () => { chave = $("chave").value.trim(); sessionStorage.setItem("chave", chave); carregarFila(); carregarMotos(); carregarResumo(); };
 
 $("buscar").onclick = async () => {
   const end = $("endereco").value.trim();
@@ -706,8 +768,19 @@ $("salvarMoto").onclick = async () => {
   $("salvarMoto").disabled = false;
 };
 
-carregarFila(); carregarMotos();
-setInterval(() => { carregarFila(); carregarMotos(); }, 10000);
+async function carregarResumo() {
+  if (!chave) return;
+  try {
+    const r = await api("/resumo");
+    $("rPendentes").textContent = r.pendentes;
+    $("rEmRota").textContent = r.em_rota;
+    $("rEntregues").textContent = r.entregues_hoje;
+    $("rTempo").textContent = r.tempo_medio_min === null ? "—" : r.tempo_medio_min + " min";
+  } catch (e) { /* não interrompe o resto do painel por causa disso */ }
+}
+
+carregarFila(); carregarMotos(); carregarResumo();
+setInterval(() => { carregarFila(); carregarMotos(); carregarResumo(); }, 10000);
 </script>
 </body>
 </html>
@@ -738,7 +811,8 @@ def marcar_entregue(motoboy_id: str, pedido_id: str, x_codigo: str = Header(defa
         if m is None or not secrets.compare_digest(x_codigo.encode(), m[0].encode()):
             raise HTTPException(status_code=401, detail="Nome ou código incorretos")
         r = con.execute(text(
-            "UPDATE pedidos SET status = 'concluido' WHERE id = :p AND motoboy_id = :m AND status = 'despachado'"),
+            "UPDATE pedidos SET status = 'concluido', concluido_em = CURRENT_TIMESTAMP "
+            "WHERE id = :p AND motoboy_id = :m AND status = 'despachado'"),
             {"p": pedido_id, "m": motoboy_id})
         if r.rowcount == 0:
             raise HTTPException(status_code=404, detail="Pedido não encontrado na sua rota")
