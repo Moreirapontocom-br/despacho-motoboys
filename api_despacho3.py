@@ -251,7 +251,7 @@ def buscar_endereco(consulta):
 @app.post("/geocodificar", dependencies=[Depends(exigir_chave)])
 def geocodificar(c: Consulta):
     try:
-        return {"resultados": buscar_endereco(c.endereco)}
+        return {"resultados": buscar_endereco(c.endereco), "centro": RESTAURANTE}
     except Exception:
         raise HTTPException(status_code=502, detail="Não consegui consultar o serviço de endereços agora. Tente de novo.")
 
@@ -279,7 +279,10 @@ PAINEL_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="google" content="notranslate">
 <title>Painel do restaurante</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <style>
+ #mapaConfirma{height:340px;border-radius:8px;margin:8px 0}
+ .pino{width:22px;height:22px;border-radius:50%;background:#dc2626;border:3px solid #fff;box-shadow:0 0 4px #000}
  body{font-family:system-ui,sans-serif;margin:0;background:#f5f5f5;color:#222}
  header{padding:12px 16px;background:#1f2937;color:#fff;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
  main{max-width:720px;margin:0 auto;padding:12px}
@@ -313,6 +316,14 @@ PAINEL_HTML = r"""<!DOCTYPE html>
   </div>
   <div id="msgBusca"></div>
   <ul id="candidatos"></ul>
+  <div id="confirmacao" style="display:none">
+   <strong>Confirme o ponto:</strong> arraste o pino vermelho até a porta do cliente (ou clique no mapa).
+   <div id="mapaConfirma"></div>
+   <div class="linha">
+    <button id="confirmar" class="verde">Confirmar pedido neste ponto</button>
+    <button id="cancelar" style="background:#6b7280">Cancelar</button>
+   </div>
+  </div>
  </section>
  <section>
   <h2>2. Pedidos na fila</h2>
@@ -323,6 +334,7 @@ PAINEL_HTML = r"""<!DOCTYPE html>
   <div id="msgDespacho"></div>
  </section>
 </main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script>
 let chave = sessionStorage.getItem("chave") || "";
 const $ = (i) => document.getElementById(i);
@@ -352,28 +364,47 @@ $("buscar").onclick = async () => {
   dizer($("msgBusca"), "Buscando...");
   try {
     const r = await api("/geocodificar", "POST", {endereco: end + ", " + $("cidade").value.trim()});
-    if (!r.resultados.length) { dizer($("msgBusca"), "Não achei. Tente sem o bairro ou confira o nome da rua.", "erro"); return; }
+    if (!r.resultados.length) { dizer($("msgBusca"), "Não achei o endereço. Clique no mapa no ponto certo.", "erro"); mostrarConfirmacao(r.centro); return; }
     dizer($("msgBusca"), "Clique no endereço correto:");
     r.resultados.forEach((c) => {
       const li = document.createElement("li");
       const t = document.createElement("span"); t.textContent = c.rotulo;
       const b = document.createElement("button"); b.textContent = "Usar este";
-      b.onclick = () => criarPedido(c, b);
+      b.onclick = () => mostrarConfirmacao(c);
       li.append(t, b); $("candidatos").append(li);
     });
   } catch (e) { dizer($("msgBusca"), e.message, "erro"); }
 };
 
-async function criarPedido(c, botao) {
-  botao.disabled = true;
+let mapaC = null, pino = null;
+function mostrarConfirmacao(c) {
+  $("confirmacao").style.display = "block";
+  if (!mapaC) {
+    mapaC = L.map("mapaConfirma");
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom: 19, attribution: "&copy; OpenStreetMap"}).addTo(mapaC);
+    pino = L.marker([c.lat, c.lng], {draggable: true, icon: L.divIcon({className: "", html: '<div class="pino"></div>', iconSize: [22, 22]})}).addTo(mapaC);
+    mapaC.on("click", (e) => pino.setLatLng(e.latlng));
+  }
+  mapaC.invalidateSize();
+  mapaC.setView([c.lat, c.lng], 18);
+  pino.setLatLng([c.lat, c.lng]);
+  $("confirmacao").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+
+$("cancelar").onclick = () => { $("confirmacao").style.display = "none"; };
+
+$("confirmar").onclick = async () => {
+  const ponto = pino.getLatLng();
+  $("confirmar").disabled = true;
   const id = "P" + Date.now().toString(36).toUpperCase();
   try {
-    await api("/pedidos", "POST", {id: id, endereco: textoDigitado + ", " + $("cidade").value.trim(), lat: c.lat, lng: c.lng});
+    await api("/pedidos", "POST", {id: id, endereco: textoDigitado + ", " + $("cidade").value.trim(), lat: ponto.lat, lng: ponto.lng});
     dizer($("msgBusca"), "Pedido " + id + " criado.", "ok");
-    $("candidatos").innerHTML = ""; $("endereco").value = "";
+    $("candidatos").innerHTML = ""; $("endereco").value = ""; $("confirmacao").style.display = "none";
     carregarFila();
-  } catch (e) { dizer($("msgBusca"), e.message, "erro"); botao.disabled = false; }
-}
+  } catch (e) { dizer($("msgBusca"), e.message, "erro"); }
+  $("confirmar").disabled = false;
+};
 
 async function carregarFila() {
   if (!chave) return;
@@ -498,9 +529,9 @@ function desenhar(dados) {
     const li = document.createElement("li");
     const t = document.createElement("span"); t.textContent = (i + 1) + ". " + p.id + " - " + p.endereco;
     const a = document.createElement("a"); a.textContent = "Navegar"; a.target = "_blank";
-    a.href = "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(p.endereco);
-    const b = document.createElement("a"); b.textContent = "Ponto"; b.target = "_blank"; b.className = "sec";
-    b.href = "https://www.google.com/maps/dir/?api=1&destination=" + p.lat + "," + p.lng;
+    a.href = "https://www.google.com/maps/dir/?api=1&destination=" + p.lat + "," + p.lng;
+    const b = document.createElement("a"); b.textContent = "Pelo endereço"; b.target = "_blank"; b.className = "sec";
+    b.href = "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(p.endereco);
     const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(a, b);
     li.append(t, acoes); lista.append(li);
   });
