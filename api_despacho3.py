@@ -5,6 +5,8 @@ Variáveis de ambiente (configuradas no painel do Render, nunca dentro do códig
     DATABASE_URL  endereço do banco Postgres. Se não existir, usa um arquivo
                   SQLite local (só para testes no seu computador).
     RESTAURANTE_LAT / RESTAURANTE_LNG / RESTAURANTE_ENDERECO  (opcionais) local do restaurante.
+    OSRM_URL      (opcional) serviço de rotas pelas ruas. Padrão: servidor público de demonstração
+                  do OSRM (uso não comercial, sem garantia). Use "desligado" para só linha reta.
     API_KEY       chave secreta exigida em /pedidos, /motoboys, /despachar e /status.
                   Deve ser enviada no cabeçalho  X-API-Key.
 
@@ -12,6 +14,7 @@ O motoboy não usa a API_KEY. Cada motoboy tem um código próprio (definido ao
 cadastrá-lo) e só consegue ver a rota dele, enviando esse código no cabeçalho X-Codigo.
 """
 
+import itertools
 import json
 import logging
 import math
@@ -132,16 +135,107 @@ def agrupar_pedidos(pedidos, raio_km=2.0, max_por_lote=4):
     return lotes
 
 
+# ---------------------------------------------------------------------
+# Rotas pelas ruas (OSRM). Se o serviço falhar, tudo continua em linha reta.
+# ---------------------------------------------------------------------
+OSRM_URL = os.environ.get("OSRM_URL", "https://router.project-osrm.org").strip().rstrip("/")
+_trava_osrm = threading.Lock()
+_ultimo_osrm = 0.0
+_osrm_falha_ate = 0.0
+_cache_trajetos = {}
+
+
+def _osrm_get(caminho):
+    """Consulta o serviço de rotas. Devolve o JSON ou None se falhar.
+    Respeita 1 consulta por segundo e, depois de uma falha, não tenta de novo por 60 s."""
+    global _ultimo_osrm, _osrm_falha_ate
+    if not OSRM_URL or OSRM_URL.lower() in ("off", "desligado"):
+        return None
+    if time.time() < _osrm_falha_ate:
+        return None
+    with _trava_osrm:
+        espera = 1.1 - (time.time() - _ultimo_osrm)
+        if espera > 0:
+            time.sleep(espera)
+        _ultimo_osrm = time.time()
+    req = urllib.request.Request(OSRM_URL + caminho,
+                                 headers={"User-Agent": "despacho-motoboys/1.0 (painel de restaurante pequeno)"})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            dados = json.load(resp)
+        if dados.get("code") != "Ok":
+            raise ValueError(dados.get("code"))
+        return dados
+    except Exception as e:
+        logging.getLogger("uvicorn.error").warning("Falha no serviço de rotas: %r", e)
+        _osrm_falha_ate = time.time() + 60
+        return None
+
+
+def _coords(pontos):
+    return ";".join(f"{p['lng']:.6f},{p['lat']:.6f}" for p in pontos)
+
+
+def matriz_duracoes(pontos):
+    """Tempo de carro (segundos) entre todos os pares de pontos, pelas ruas. None se indisponível."""
+    if len(pontos) < 2 or len(pontos) > 90:
+        return None
+    dados = _osrm_get("/table/v1/driving/" + _coords(pontos) + "?annotations=duration")
+    matriz = dados.get("durations") if dados else None
+    if not matriz or len(matriz) != len(pontos):
+        return None
+    return matriz
+
+
+def _custo_reta(a, b):
+    """Estimativa em segundos pela linha reta (cerca de 30 km/h), usada quando as ruas não estão disponíveis."""
+    return haversine(a["lat"], a["lng"], b["lat"], b["lng"]) * 120
+
+
 def ordenar_rota(origem, pedidos):
-    restantes = pedidos.copy()
-    rota = []
-    atual = origem
+    """Melhor ordem das paradas saindo do restaurante (menor tempo total).
+    Até 7 paradas testa todas as ordens; acima disso usa o vizinho mais próximo."""
+    if len(pedidos) <= 1:
+        return pedidos.copy()
+    pontos = [origem] + pedidos
+    mat = matriz_duracoes(pontos)
+
+    def custo(i, j):
+        if mat is not None and mat[i][j] is not None:
+            return mat[i][j]
+        return _custo_reta(pontos[i], pontos[j])
+
+    n = len(pedidos)
+    if n <= 7:
+        melhor = min(itertools.permutations(range(1, n + 1)),
+                     key=lambda ordem: custo(0, ordem[0]) + sum(custo(ordem[k], ordem[k + 1]) for k in range(n - 1)))
+        return [pontos[i] for i in melhor]
+    restantes, atual, rota = list(range(1, n + 1)), 0, []
     while restantes:
-        proximo = min(restantes, key=lambda p: haversine(atual["lat"], atual["lng"], p["lat"], p["lng"]))
-        rota.append(proximo)
-        atual = proximo
-        restantes.remove(proximo)
+        prox = min(restantes, key=lambda j: custo(atual, j))
+        rota.append(pontos[prox])
+        restantes.remove(prox)
+        atual = prox
     return rota
+
+
+def trajeto(origem, paradas):
+    """Linha do caminho pelas ruas (lista de [lat, lng]) para desenhar no mapa. None se indisponível.
+    O resultado fica guardado enquanto as paradas não mudam, para não consultar a cada atualização."""
+    pontos = [origem] + list(paradas)
+    if len(pontos) < 2 or len(pontos) > 25:
+        return None
+    chave = _coords(pontos)
+    if chave in _cache_trajetos:
+        return _cache_trajetos[chave]
+    dados = _osrm_get("/route/v1/driving/" + chave + "?overview=simplified&geometries=geojson")
+    if not dados or not dados.get("routes"):
+        return None
+    linha = [[round(lat, 5), round(lng, 5)] for lng, lat in dados["routes"][0]["geometry"]["coordinates"]]
+    if len(_cache_trajetos) > 200:
+        _cache_trajetos.clear()
+    _cache_trajetos[chave] = linha
+    return linha
 
 
 def atribuir_motoboys(lotes, motoboys, carga_inicial=None):
@@ -546,7 +640,8 @@ def rota_do_motoboy(motoboy_id: str, x_codigo: str = Header(default="")):
         paradas = [dict(r._mapping) for r in con.execute(text(
             "SELECT id, endereco, lat, lng FROM pedidos WHERE motoboy_id = :id AND status = 'despachado' ORDER BY ordem"),
             {"id": motoboy_id})]
-    return {"motoboy_id": motoboy_id, "restaurante": RESTAURANTE, "paradas": paradas}
+    return {"motoboy_id": motoboy_id, "restaurante": RESTAURANTE, "paradas": paradas,
+            "trajeto": trajeto(RESTAURANTE, paradas) if paradas else None}
 
 
 @app.post("/rotas/{motoboy_id}/entregar/{pedido_id}")
@@ -618,7 +713,7 @@ const cod = document.getElementById("codigo"); cod.value = codigo;
 document.getElementById("ir").onclick = () => { location.search = "?id=" + encodeURIComponent(nome.value.trim()) + "&codigo=" + encodeURIComponent(cod.value.trim()); };
 
 const mapa = L.map("mapa").setView([-19.6156, -43.2258], 14);
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom: 19, attribution: "&copy; OpenStreetMap"}).addTo(mapa);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom: 19, attribution: "&copy; OpenStreetMap | rotas: OSRM"}).addTo(mapa);
 const camada = L.layerGroup().addTo(mapa);
 let ultimo = "";
 let modo = "rest";
@@ -668,7 +763,8 @@ function desenhar(dados) {
     const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(a, b, e);
     li.append(t, acoes); lista.append(li);
   });
-  L.polyline(pontos, {color: "#2563eb"}).addTo(camada);
+  const linha = (dados.trajeto && dados.trajeto.length > 1) ? dados.trajeto : pontos;
+  L.polyline(linha, {color: "#2563eb", weight: 5, opacity: 0.8}).addTo(camada);
   mapa.fitBounds(pontos, {padding: [30, 30]});
 }
 
