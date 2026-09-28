@@ -143,8 +143,8 @@ def ordenar_rota(origem, pedidos):
     return rota
 
 
-def atribuir_motoboys(lotes, motoboys):
-    carga = {m["id"]: 0 for m in motoboys}
+def atribuir_motoboys(lotes, motoboys, carga_inicial=None):
+    carga = {m["id"]: (carga_inicial or {}).get(m["id"], 0) for m in motoboys}
     atribuicoes = {m["id"]: [] for m in motoboys}
     for lote in lotes:
         primeiro = lote[0]
@@ -184,7 +184,8 @@ def cadastrar_motoboy(motoboy: Motoboy):
 @app.post("/despachar", dependencies=[Depends(exigir_chave)])
 def despachar():
     """Agrupa os pedidos pendentes, monta as rotas e distribui entre os motoboys.
-    A rota nova de um motoboy substitui a anterior dele."""
+    As paradas novas entram no fim da rota de cada motoboy; as que ele ainda não
+    marcou como entregues continuam na rota dele."""
     with engine.begin() as con:
         pedidos = [dict(r._mapping) for r in con.execute(text(
             "SELECT id, endereco, lat, lng FROM pedidos WHERE status = 'pendente' ORDER BY criado_em, id"))]
@@ -192,15 +193,18 @@ def despachar():
         if not pedidos or not motoboys:
             return {"mensagem": "Sem pedidos ou motoboys suficientes para despachar."}
 
-        atribuicoes = atribuir_motoboys(agrupar_pedidos(pedidos), motoboys)
+        existentes = {r[0]: (r[1], r[2]) for r in con.execute(text(
+            "SELECT motoboy_id, COUNT(*), COALESCE(MAX(ordem), 0) FROM pedidos "
+            "WHERE status = 'despachado' GROUP BY motoboy_id"))}
+        carga_inicial = {m: n for m, (n, _) in existentes.items()}
+        atribuicoes = atribuir_motoboys(agrupar_pedidos(pedidos), motoboys, carga_inicial)
         resultado = {}
         for motoboy_id, lista in atribuicoes.items():
             if not lista:
                 continue
             rota = ordenar_rota(RESTAURANTE, lista)
-            con.execute(text("UPDATE pedidos SET status = 'concluido' WHERE motoboy_id = :m AND status = 'despachado'"),
-                        {"m": motoboy_id})
-            for ordem, p in enumerate(rota, start=1):
+            inicio = existentes.get(motoboy_id, (0, 0))[1]
+            for ordem, p in enumerate(rota, start=inicio + 1):
                 con.execute(text("UPDATE pedidos SET status = 'despachado', motoboy_id = :m, ordem = :o WHERE id = :id"),
                             {"m": motoboy_id, "o": ordem, "id": p["id"]})
             resultado[motoboy_id] = rota
@@ -461,6 +465,21 @@ def rota_do_motoboy(motoboy_id: str, x_codigo: str = Header(default="")):
     return {"motoboy_id": motoboy_id, "restaurante": RESTAURANTE, "paradas": paradas}
 
 
+@app.post("/rotas/{motoboy_id}/entregar/{pedido_id}")
+def marcar_entregue(motoboy_id: str, pedido_id: str, x_codigo: str = Header(default="")):
+    """O motoboy marca uma parada como entregue (precisa do código dele)."""
+    with engine.begin() as con:
+        m = con.execute(text("SELECT codigo FROM motoboys WHERE id = :id"), {"id": motoboy_id}).first()
+        if m is None or not secrets.compare_digest(x_codigo.encode(), m[0].encode()):
+            raise HTTPException(status_code=401, detail="Nome ou código incorretos")
+        r = con.execute(text(
+            "UPDATE pedidos SET status = 'concluido' WHERE id = :p AND motoboy_id = :m AND status = 'despachado'"),
+            {"p": pedido_id, "m": motoboy_id})
+        if r.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Pedido não encontrado na sua rota")
+    return {"mensagem": "Entrega registrada"}
+
+
 @app.get("/motoboy")
 def pagina_do_motoboy():
     """Página com o mapa. Abra em /motoboy?id=NOME&codigo=CODIGO (não contém dados de clientes)."""
@@ -486,7 +505,9 @@ PAGINA_HTML = r"""<!DOCTYPE html>
  #paradas a{background:#2563eb;color:#fff;padding:6px 10px;border-radius:6px;text-decoration:none}
  .num{background:#2563eb;color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:bold;border:2px solid #fff}
  .rest{background:#10b981}
- .acoes{display:flex;gap:6px;flex-shrink:0}
+ .acoes{display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+ .ent{background:#10b981;color:#fff;border:0;border-radius:6px;padding:6px 10px;font-size:1rem;cursor:pointer}
+ .ent:disabled{opacity:.5}
  .completa{display:inline-block;margin-left:8px;background:#10b981;color:#fff;padding:6px 10px;border-radius:6px;text-decoration:none}
  #paradas a.sec{background:#6b7280}
 </style>
@@ -542,7 +563,17 @@ function desenhar(dados) {
     a.href = "https://www.google.com/maps/dir/?api=1&origin=" + origem + "&destination=" + encodeURIComponent(p.endereco);
     const b = document.createElement("a"); b.textContent = "Pelo ponto"; b.target = "_blank"; b.className = "sec";
     b.href = "https://www.google.com/maps/dir/?api=1&origin=" + origem + "&destination=" + p.lat + "," + p.lng;
-    const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(a, b);
+    const e = document.createElement("button"); e.textContent = "Entregue"; e.className = "ent";
+    e.onclick = async () => {
+      if (!confirm("Marcar como entregue?\n" + p.endereco)) return;
+      e.disabled = true;
+      try {
+        const resp = await fetch("/rotas/" + encodeURIComponent(id) + "/entregar/" + encodeURIComponent(p.id), {method: "POST", headers: {"X-Codigo": codigo}});
+        if (!resp.ok && resp.status !== 404) throw new Error("falhou");
+      } catch (err) { alert("Não consegui registrar a entrega. Tente de novo."); e.disabled = false; return; }
+      atualizar();
+    };
+    const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(a, b, e);
     li.append(t, acoes); lista.append(li);
   });
   L.polyline(pontos, {color: "#2563eb"}).addTo(camada);
