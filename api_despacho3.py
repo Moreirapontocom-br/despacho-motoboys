@@ -325,36 +325,50 @@ def definir_turno(motoboy_id: str, t: Turno):
     return {"mensagem": "Turno atualizado"}
 
 
+_trava_despacho = threading.Lock()
+
+
 @app.post("/despachar", dependencies=[Depends(exigir_chave)])
 def despachar():
     """Agrupa os pedidos pendentes, monta as rotas e distribui entre os motoboys.
     As paradas novas entram no fim da rota de cada motoboy; as que ele ainda não
-    marcou como entregues continuam na rota dele."""
-    with engine.begin() as con:
-        pedidos = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, endereco, lat, lng FROM pedidos WHERE status = 'pendente' ORDER BY criado_em, id"))]
-        motoboys = [dict(r._mapping) for r in con.execute(text("SELECT id, lat, lng FROM motoboys WHERE ativo"))]
-        if not pedidos:
-            return {"mensagem": "Não há pedidos pendentes para despachar."}
-        if not motoboys:
-            return {"mensagem": "Nenhum motoboy de turno agora. Ligue o turno de alguém no painel."}
+    marcou como entregues continuam na rota dele.
 
-        existentes = {r[0]: (r[1], r[2]) for r in con.execute(text(
-            "SELECT motoboy_id, COUNT(*), COALESCE(MAX(ordem), 0) FROM pedidos "
-            "WHERE status = 'despachado' GROUP BY motoboy_id"))}
-        carga_inicial = {m: n for m, (n, _) in existentes.items()}
-        atribuicoes = atribuir_motoboys(agrupar_pedidos(pedidos), motoboys, carga_inicial)
-        resultado = {}
-        for motoboy_id, lista in atribuicoes.items():
-            if not lista:
-                continue
-            rota = ordenar_rota(RESTAURANTE, lista)
-            inicio = existentes.get(motoboy_id, (0, 0))[1]
-            for ordem, p in enumerate(rota, start=inicio + 1):
-                con.execute(text("UPDATE pedidos SET status = 'despachado', motoboy_id = :m, ordem = :o WHERE id = :id"),
-                            {"m": motoboy_id, "o": ordem, "id": p["id"]})
-            resultado[motoboy_id] = rota
-    return {"rotas": resultado}
+    _trava_despacho impede que dois cliques em "Despachar agora" (ou dois pedidos
+    simultâneos) rodem ao mesmo tempo e embaralhem as rotas um do outro. Isso
+    funciona porque o servidor roda numa única cópia (um "worker"); se um dia o
+    Render for configurado para rodar várias cópias ao mesmo tempo, essa trava
+    precisaria virar uma trava no próprio banco de dados."""
+    if not _trava_despacho.acquire(timeout=15):
+        raise HTTPException(status_code=503, detail="Já existe um despacho em andamento. Tente de novo em alguns segundos.")
+    try:
+        with engine.begin() as con:
+            pedidos = [dict(r._mapping) for r in con.execute(text(
+                "SELECT id, endereco, lat, lng FROM pedidos WHERE status = 'pendente' ORDER BY criado_em, id"))]
+            motoboys = [dict(r._mapping) for r in con.execute(text("SELECT id, lat, lng FROM motoboys WHERE ativo"))]
+            if not pedidos:
+                return {"mensagem": "Não há pedidos pendentes para despachar."}
+            if not motoboys:
+                return {"mensagem": "Nenhum motoboy de turno agora. Ligue o turno de alguém no painel."}
+
+            existentes = {r[0]: (r[1], r[2]) for r in con.execute(text(
+                "SELECT motoboy_id, COUNT(*), COALESCE(MAX(ordem), 0) FROM pedidos "
+                "WHERE status = 'despachado' GROUP BY motoboy_id"))}
+            carga_inicial = {m: n for m, (n, _) in existentes.items()}
+            atribuicoes = atribuir_motoboys(agrupar_pedidos(pedidos), motoboys, carga_inicial)
+            resultado = {}
+            for motoboy_id, lista in atribuicoes.items():
+                if not lista:
+                    continue
+                rota = ordenar_rota(RESTAURANTE, lista)
+                inicio = existentes.get(motoboy_id, (0, 0))[1]
+                for ordem, p in enumerate(rota, start=inicio + 1):
+                    con.execute(text("UPDATE pedidos SET status = 'despachado', motoboy_id = :m, ordem = :o WHERE id = :id"),
+                                {"m": motoboy_id, "o": ordem, "id": p["id"]})
+                resultado[motoboy_id] = rota
+        return {"rotas": resultado}
+    finally:
+        _trava_despacho.release()
 
 
 @app.get("/status", dependencies=[Depends(exigir_chave)])
