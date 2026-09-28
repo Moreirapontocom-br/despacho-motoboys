@@ -14,6 +14,8 @@ O motoboy não usa a API_KEY. Cada motoboy tem um código próprio (definido ao
 cadastrá-lo) e só consegue ver a rota dele, enviando esse código no cabeçalho X-Codigo.
 """
 
+import csv
+import io
 import itertools
 import json
 import logging
@@ -27,7 +29,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
 
@@ -502,6 +504,45 @@ def resumo():
             "tempo_medio_min": tempo_medio_min}
 
 
+def _fmt_local(dt_utc):
+    """Formata um datetime UTC (ou None) no horário local do restaurante, como texto."""
+    if dt_utc is None:
+        return ""
+    return (dt_utc + timedelta(hours=TIMEZONE_OFFSET_HORAS)).strftime("%d/%m/%Y %H:%M")
+
+
+@app.get("/historico.csv", dependencies=[Depends(exigir_chave)])
+def historico_csv(dias: int = 30):
+    """Baixa em CSV as entregas concluídas dos últimos N dias (30 por padrão, no
+    máximo 365), para abrir no Excel ou guardar. Pedidos concluídos antes desta
+    atualização não têm concluido_em salvo e por isso não aparecem aqui."""
+    dias = max(1, min(dias, 365))
+    agora_local = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET_HORAS)
+    inicio_local = (agora_local - timedelta(days=dias - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    inicio_utc = inicio_local - timedelta(hours=TIMEZONE_OFFSET_HORAS)
+    with engine.connect() as con:
+        linhas = [dict(r._mapping) for r in con.execute(text(
+            "SELECT id, endereco, motoboy_id, criado_em, concluido_em FROM pedidos "
+            "WHERE status = 'concluido' AND concluido_em IS NOT NULL ORDER BY concluido_em"))]
+
+    saida = io.StringIO()
+    saida.write("\ufeff")  # marca de ordem de bytes: sem isso o Excel no Windows pode exibir acentos errados
+    escritor = csv.writer(saida, delimiter=";")
+    escritor.writerow(["Pedido", "Endereço", "Motoboy", "Criado em", "Entregue em", "Tempo (min)"])
+    for p in linhas:
+        concluido_t = _parse_ts(p["concluido_em"])
+        if concluido_t is None or concluido_t < inicio_utc:
+            continue
+        criado_t = _parse_ts(p["criado_em"])
+        tempo = round((concluido_t - criado_t).total_seconds() / 60, 1) if criado_t is not None else ""
+        escritor.writerow([p["id"], p["endereco"], p["motoboy_id"] or "",
+                            _fmt_local(criado_t), _fmt_local(concluido_t), tempo])
+
+    nome_arquivo = f"historico_{agora_local.strftime('%Y-%m-%d')}.csv"
+    return Response(content=saida.getvalue(), media_type="text/csv; charset=utf-8",
+                     headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'})
+
+
 # ---------------------------------------------------------------------
 # Painel do restaurante (protegido pela API_KEY digitada na própria página)
 # ---------------------------------------------------------------------
@@ -626,6 +667,11 @@ PAINEL_HTML = r"""<!DOCTYPE html>
    <div class="cartao"><div class="num" id="rEntregues">—</div><div class="rot">Entregues hoje</div></div>
    <div class="cartao"><div class="num" id="rTempo">—</div><div class="rot">Tempo médio</div></div>
   </div>
+  <div class="linha" style="margin-top:10px;align-items:center">
+   <button id="baixarHistorico" class="cinza">Baixar histórico (CSV)</button>
+   <span style="font-size:.9rem;color:#555">últimos <input id="diasHistorico" type="number" min="1" max="365" value="30" style="width:60px;padding:4px"> dia(s)</span>
+  </div>
+  <div id="msgHistorico"></div>
  </section>
  <section>
   <h2>1. Novo pedido</h2>
@@ -848,6 +894,24 @@ async function carregarResumo() {
     $("rTempo").textContent = r.tempo_medio_min === null ? "—" : r.tempo_medio_min + " min";
   } catch (e) { /* não interrompe o resto do painel por causa disso */ }
 }
+
+$("baixarHistorico").onclick = async () => {
+  if (!chave) { dizer($("msgHistorico"), "Entre com a chave primeiro.", "erro"); return; }
+  const dias = $("diasHistorico").value || 30;
+  $("baixarHistorico").disabled = true;
+  dizer($("msgHistorico"), "Gerando arquivo...");
+  try {
+    const resp = await fetch("/historico.csv?dias=" + encodeURIComponent(dias), {headers: {"X-API-Key": chave}});
+    if (!resp.ok) throw new Error("Não consegui gerar o histórico agora.");
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "historico.csv";
+    document.body.append(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    dizer($("msgHistorico"), "Baixado.", "ok");
+  } catch (e) { dizer($("msgHistorico"), e.message, "erro"); }
+  $("baixarHistorico").disabled = false;
+};
 
 // carregarMotos primeiro: carregarFila usa a lista de motoboys para o seletor de "Atribuir".
 async function atualizarTudo() { await carregarMotos(); await carregarFila(); await carregarResumo(); }
