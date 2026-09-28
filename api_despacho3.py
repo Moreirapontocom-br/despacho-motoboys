@@ -56,6 +56,9 @@ GPS_VALIDADE_MIN = int(_coord("GPS_VALIDADE_MIN", 10))
 # Para mudar (outro estado, por exemplo), crie TIMEZONE_OFFSET_HORAS no Render.
 TIMEZONE_OFFSET_HORAS = _coord("TIMEZONE_OFFSET_HORAS", -3)
 
+# Depois de quantos minutos pendente (sem despachar) um pedido é marcado como atrasado no painel.
+PEDIDO_ATRASO_MIN = _coord("PEDIDO_ATRASO_MIN", 15)
+
 
 def _parse_ts(v):
     """Converte um horário vindo do banco (datetime já pronto, ou texto no caso do
@@ -519,11 +522,18 @@ def geocodificar(c: Consulta):
 
 @app.get("/pedidos", dependencies=[Depends(exigir_chave)])
 def listar_pedidos():
-    """Pedidos pendentes e em rota (os concluídos não aparecem)."""
+    """Pedidos pendentes e em rota (os concluídos não aparecem).
+    Um pedido pendente há mais de PEDIDO_ATRASO_MIN minutos sem ser despachado
+    vem marcado com "atrasado": true, para o painel destacar."""
     with engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, endereco, status, motoboy_id, ordem FROM pedidos WHERE status <> 'concluido' "
+            "SELECT id, endereco, status, motoboy_id, ordem, criado_em FROM pedidos WHERE status <> 'concluido' "
             "ORDER BY status, motoboy_id, ordem, criado_em"))]
+    agora = datetime.utcnow()
+    for p in linhas:
+        criado = _parse_ts(p.pop("criado_em"))
+        p["atrasado"] = bool(p["status"] == "pendente" and criado is not None
+                              and (agora - criado).total_seconds() / 60 >= PEDIDO_ATRASO_MIN)
     return {"pedidos": linhas}
 
 
@@ -559,6 +569,8 @@ PAINEL_HTML = r"""<!DOCTYPE html>
  li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #eee}
  li:first-child{border-top:0}
  .tag{font-size:.8rem;padding:2px 8px;border-radius:10px;background:#e5e7eb;white-space:nowrap}
+ .tag.atrasado{background:#fee2e2;color:#b91c1c;font-weight:600}
+ li.atrasado{background:#fef2f2}
  .ok{color:#047857} .erro{color:#b91c1c}
  .cartoes{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
  .cartao{background:#f5f5f5;border-radius:8px;padding:10px;text-align:center}
@@ -601,6 +613,7 @@ PAINEL_HTML = r"""<!DOCTYPE html>
  </section>
  <section>
   <h2>2. Pedidos na fila</h2>
+  <div id="alertaAtraso" class="erro" style="display:none;font-weight:600;margin-bottom:6px"></div>
   <ul id="fila"></ul>
   <div class="linha" style="margin-top:10px">
    <button id="despachar" class="verde">Despachar agora</button>
@@ -697,13 +710,19 @@ async function carregarFila() {
     const r = await api("/pedidos");
     const ul = $("fila"); ul.innerHTML = "";
     if (!r.pedidos.length) { const li = document.createElement("li"); li.textContent = "Nenhum pedido na fila."; ul.append(li); }
+    let atrasados = 0;
     r.pedidos.forEach((p) => {
       const li = document.createElement("li");
+      if (p.atrasado) { li.className = "atrasado"; atrasados++; }
       const t = document.createElement("span"); t.textContent = p.id + " - " + p.endereco;
-      const s = document.createElement("span"); s.className = "tag";
-      s.textContent = p.status === "pendente" ? "aguardando" : p.motoboy_id + " (parada " + p.ordem + ")";
+      const s = document.createElement("span"); s.className = "tag" + (p.atrasado ? " atrasado" : "");
+      s.textContent = p.atrasado ? "esperando há mais de " + PEDIDO_ATRASO_MIN_TXT
+        : p.status === "pendente" ? "aguardando" : p.motoboy_id + " (parada " + p.ordem + ")";
       li.append(t, s); ul.append(li);
     });
+    const aviso = $("alertaAtraso");
+    if (atrasados) { aviso.style.display = "block"; aviso.textContent = "⚠ " + atrasados + " pedido(s) esperando há mais de " + PEDIDO_ATRASO_MIN_TXT + " sem despachar."; }
+    else { aviso.style.display = "none"; }
   } catch (e) { dizer($("msgDespacho"), e.message, "erro"); }
 }
 
@@ -723,6 +742,7 @@ $("despachar").onclick = async () => {
 };
 
 let centro = null;
+const PEDIDO_ATRASO_MIN_TXT = "__PEDIDO_ATRASO_MIN__ min";
 async function carregarMotos() {
   if (!chave) return;
   try {
@@ -785,6 +805,7 @@ setInterval(() => { carregarFila(); carregarMotos(); carregarResumo(); }, 10000)
 </body>
 </html>
 """
+PAINEL_HTML = PAINEL_HTML.replace("__PEDIDO_ATRASO_MIN__", str(int(PEDIDO_ATRASO_MIN)))
 
 
 # ---------------------------------------------------------------------
