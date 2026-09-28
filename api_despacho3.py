@@ -4,7 +4,7 @@ API de despacho automático de motoboys - versão 3 (com banco de dados e segura
 Variáveis de ambiente (configuradas no painel do Render, nunca dentro do código):
     DATABASE_URL  endereço do banco Postgres. Se não existir, usa um arquivo
                   SQLite local (só para testes no seu computador).
-    RESTAURANTE_LAT / RESTAURANTE_LNG  (opcionais) local do restaurante.
+    RESTAURANTE_LAT / RESTAURANTE_LNG / RESTAURANTE_ENDERECO  (opcionais) local do restaurante.
     API_KEY       chave secreta exigida em /pedidos, /motoboys, /despachar e /status.
                   Deve ser enviada no cabeçalho  X-API-Key.
 
@@ -37,7 +37,9 @@ def _coord(nome, padrao):
 
 
 # Local do restaurante. Para mudar, defina RESTAURANTE_LAT e RESTAURANTE_LNG no Render.
-RESTAURANTE = {"lat": _coord("RESTAURANTE_LAT", -19.6156), "lng": _coord("RESTAURANTE_LNG", -43.2258)}
+# RESTAURANTE_ENDERECO (opcional): endereço em texto, usado como ponto de partida no Google Maps.
+RESTAURANTE = {"lat": _coord("RESTAURANTE_LAT", -19.6156), "lng": _coord("RESTAURANTE_LNG", -43.2258),
+               "endereco": os.environ.get("RESTAURANTE_ENDERECO", "").strip()}
 API_KEY = os.environ.get("API_KEY", "")
 
 # ---------------------------------------------------------------------
@@ -524,9 +526,10 @@ function desenhar(dados) {
   msg.textContent = dados.paradas.length + " parada(s) na sua rota:";
   const ll = (x) => x.lat + "," + x.lng;
   const ps = dados.paradas.slice(0, 10);
-  const meio = ps.slice(0, -1).map(ll).join("|");
+  const origem = encodeURIComponent(dados.restaurante.endereco || ll(dados.restaurante));
+  const meio = ps.slice(0, -1).map((x) => x.endereco).join("|");
   const rc = document.createElement("a"); rc.textContent = "Rota completa no Maps (saindo do restaurante)"; rc.target = "_blank"; rc.className = "completa";
-  rc.href = "https://www.google.com/maps/dir/?api=1&origin=" + ll(dados.restaurante) + "&destination=" + ll(ps[ps.length - 1]) + (meio ? "&waypoints=" + encodeURIComponent(meio) : "");
+  rc.href = "https://www.google.com/maps/dir/?api=1&origin=" + origem + "&destination=" + encodeURIComponent(ps[ps.length - 1].endereco) + (meio ? "&waypoints=" + encodeURIComponent(meio) : "");
   msg.append(" ", rc);
   const r = dados.restaurante, pontos = [[r.lat, r.lng]];
   L.marker([r.lat, r.lng], {icon: icone("R", "rest")}).addTo(camada);
@@ -536,9 +539,9 @@ function desenhar(dados) {
     const li = document.createElement("li");
     const t = document.createElement("span"); t.textContent = (i + 1) + ". " + p.id + " - " + p.endereco;
     const a = document.createElement("a"); a.textContent = "Navegar"; a.target = "_blank";
-    a.href = "https://www.google.com/maps/dir/?api=1&destination=" + p.lat + "," + p.lng;
-    const b = document.createElement("a"); b.textContent = "Pelo endereço"; b.target = "_blank"; b.className = "sec";
-    b.href = "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(p.endereco);
+    a.href = "https://www.google.com/maps/dir/?api=1&origin=" + origem + "&destination=" + encodeURIComponent(p.endereco);
+    const b = document.createElement("a"); b.textContent = "Pelo ponto"; b.target = "_blank"; b.className = "sec";
+    b.href = "https://www.google.com/maps/dir/?api=1&origin=" + origem + "&destination=" + p.lat + "," + p.lng;
     const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(a, b);
     li.append(t, acoes); lista.append(li);
   });
