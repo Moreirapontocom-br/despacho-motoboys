@@ -24,6 +24,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
@@ -46,6 +47,27 @@ RESTAURANTE = {"lat": _coord("RESTAURANTE_LAT", -19.6156), "lng": _coord("RESTAU
                "endereco": os.environ.get("RESTAURANTE_ENDERECO", "").strip()}
 API_KEY = os.environ.get("API_KEY", "")
 
+# Por quantos minutos a posição de GPS de um motoboy é considerada atual para o despacho.
+# Passado esse tempo, volta a usar a posição do cadastro dele.
+GPS_VALIDADE_MIN = int(_coord("GPS_VALIDADE_MIN", 10))
+
+
+def _gps_recente(gps_em):
+    """True se o horário do último GPS (vindo do banco) está dentro da validade.
+    O SQLite de testes/uso local devolve esse campo como texto, não como data;
+    por isso o texto é convertido primeiro. Tolera pequenas diferenças de fuso
+    entre bancos: se a conta der negativa (relógio do banco à frente), ainda
+    considera recente."""
+    if gps_em is None:
+        return False
+    try:
+        if isinstance(gps_em, str):
+            gps_em = datetime.fromisoformat(gps_em.replace(" ", "T", 1))
+        agora = datetime.now(timezone.utc) if gps_em.tzinfo else datetime.utcnow()
+        return abs((agora - gps_em).total_seconds()) <= GPS_VALIDADE_MIN * 60
+    except Exception:
+        return False
+
 # ---------------------------------------------------------------------
 # Banco de dados
 # ---------------------------------------------------------------------
@@ -64,16 +86,21 @@ with engine.begin() as con:
             codigo TEXT NOT NULL,
             lat DOUBLE PRECISION NOT NULL,
             lng DOUBLE PRECISION NOT NULL,
-            ativo BOOLEAN NOT NULL DEFAULT TRUE
+            ativo BOOLEAN NOT NULL DEFAULT TRUE,
+            gps_lat DOUBLE PRECISION,
+            gps_lng DOUBLE PRECISION,
+            gps_em TIMESTAMP
         )"""))
 
-# Migração: bancos criados por uma versão anterior deste código não têm a coluna 'ativo'.
-# Fica numa transação própria: se a coluna já existir, o erro não afeta o resto da inicialização.
-try:
-    with engine.begin() as con:
-        con.execute(text("ALTER TABLE motoboys ADD COLUMN ativo BOOLEAN NOT NULL DEFAULT TRUE"))
-except Exception:
-    pass
+# Migração: bancos criados por uma versão anterior deste código não têm estas colunas.
+# Cada uma numa transação própria: se já existir, o erro não afeta as demais.
+for _coluna in ("ativo BOOLEAN NOT NULL DEFAULT TRUE", "gps_lat DOUBLE PRECISION",
+                "gps_lng DOUBLE PRECISION", "gps_em TIMESTAMP"):
+    try:
+        with engine.begin() as con:
+            con.execute(text(f"ALTER TABLE motoboys ADD COLUMN {_coluna}"))
+    except Exception:
+        pass
 
 with engine.begin() as con:
     con.execute(text("""
@@ -289,11 +316,15 @@ def cadastrar_motoboy(motoboy: Motoboy):
 
 @app.get("/motoboys", dependencies=[Depends(exigir_chave)])
 def listar_motoboys():
-    """Lista os motoboys (sem os códigos) e quantas paradas cada um tem em aberto."""
+    """Lista os motoboys (sem os códigos), quantas paradas cada um tem em aberto,
+    e se a posição de GPS dele está ativa agora (enviada há menos de GPS_VALIDADE_MIN minutos)."""
     with engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT m.id, m.ativo, (SELECT COUNT(*) FROM pedidos p WHERE p.motoboy_id = m.id AND p.status = 'despachado') AS paradas "
+            "SELECT m.id, m.ativo, m.gps_em, "
+            "(SELECT COUNT(*) FROM pedidos p WHERE p.motoboy_id = m.id AND p.status = 'despachado') AS paradas "
             "FROM motoboys m ORDER BY m.id"))]
+    for m in linhas:
+        m["gps_ativo"] = _gps_recente(m.pop("gps_em"))
     return {"motoboys": linhas, "centro": RESTAURANTE}
 
 
@@ -345,7 +376,12 @@ def despachar():
         with engine.begin() as con:
             pedidos = [dict(r._mapping) for r in con.execute(text(
                 "SELECT id, endereco, lat, lng FROM pedidos WHERE status = 'pendente' ORDER BY criado_em, id"))]
-            motoboys = [dict(r._mapping) for r in con.execute(text("SELECT id, lat, lng FROM motoboys WHERE ativo"))]
+            motoboys_raw = [dict(r._mapping) for r in con.execute(text(
+                "SELECT id, lat, lng, gps_lat, gps_lng, gps_em FROM motoboys WHERE ativo"))]
+            motoboys = [{"id": m["id"],
+                         "lat": m["gps_lat"] if _gps_recente(m["gps_em"]) else m["lat"],
+                         "lng": m["gps_lng"] if _gps_recente(m["gps_em"]) else m["lng"]}
+                        for m in motoboys_raw]
             if not pedidos:
                 return {"mensagem": "Não há pedidos pendentes para despachar."}
             if not motoboys:
@@ -634,7 +670,7 @@ async function carregarMotos() {
     if (!r.motoboys.length) { const li = document.createElement("li"); li.textContent = "Nenhum motoboy cadastrado."; ul.append(li); }
     r.motoboys.forEach((m) => {
       const li = document.createElement("li");
-      const t = document.createElement("span"); t.textContent = m.id + " (" + m.paradas + " parada(s) em aberto)";
+      const t = document.createElement("span"); t.textContent = m.id + " (" + m.paradas + " parada(s) em aberto)" + (m.gps_ativo ? " — GPS ativo" : "");
       const acoes = document.createElement("div"); acoes.className = "acoes";
       const g = document.createElement("button"); g.className = m.ativo ? "on" : "off"; g.textContent = m.ativo ? "De turno" : "Fora de turno";
       g.onclick = async () => {
@@ -709,6 +745,25 @@ def marcar_entregue(motoboy_id: str, pedido_id: str, x_codigo: str = Header(defa
     return {"mensagem": "Entrega registrada"}
 
 
+class Posicao(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+@app.post("/rotas/{motoboy_id}/posicao")
+def atualizar_posicao(motoboy_id: str, p: Posicao, x_codigo: str = Header(default="")):
+    """A página do motoboy chama isto sozinha (a cada ~1 min) quando ele escolhe
+    "da minha posição". O despacho usa essa posição, se for recente, para saber
+    quem está mais perto de verdade; senão usa a posição do cadastro."""
+    with engine.begin() as con:
+        m = con.execute(text("SELECT codigo FROM motoboys WHERE id = :id"), {"id": motoboy_id}).first()
+        if m is None or not secrets.compare_digest(x_codigo.encode(), m[0].encode()):
+            raise HTTPException(status_code=401, detail="Nome ou código incorretos")
+        con.execute(text("UPDATE motoboys SET gps_lat = :lat, gps_lng = :lng, gps_em = CURRENT_TIMESTAMP WHERE id = :id"),
+                    {"lat": p.lat, "lng": p.lng, "id": motoboy_id})
+    return {"mensagem": "Posição atualizada"}
+
+
 @app.get("/motoboy")
 def pagina_do_motoboy():
     """Página com o mapa. Abra em /motoboy?id=NOME&codigo=CODIGO (não contém dados de clientes)."""
@@ -769,7 +824,30 @@ let ultimo = "";
 let modo = "rest";
 try { if (localStorage.getItem("modo") === "rua") modo = "rua"; } catch (e) {}
 const sel = document.getElementById("sel"); sel.value = modo;
-sel.onchange = () => { modo = sel.value; try { localStorage.setItem("modo", modo); } catch (e) {} ultimo = ""; atualizar(); };
+sel.onchange = () => { modo = sel.value; try { localStorage.setItem("modo", modo); } catch (e) {} ultimo = ""; atualizar(); vigiarPosicao(); };
+
+// Em "da minha posição", a página manda o GPS sozinha de vez em quando, para o
+// despacho saber quem está mais perto de verdade. Se o celular negar a permissão
+// de localização, isso é ignorado e o resto da página continua funcionando normal.
+let vigia = null, ultimoEnvioGps = 0;
+function vigiarPosicao() {
+  if (vigia !== null) { navigator.geolocation.clearWatch(vigia); vigia = null; }
+  if (modo !== "rua" || !id || !codigo || !navigator.geolocation) return;
+  vigia = navigator.geolocation.watchPosition(
+    (pos) => {
+      const agora = Date.now();
+      if (agora - ultimoEnvioGps < 45000) return;  // no máximo 1 envio a cada 45 s
+      ultimoEnvioGps = agora;
+      fetch("/rotas/" + encodeURIComponent(id) + "/posicao", {
+        method: "POST", headers: {"X-Codigo": codigo, "Content-Type": "application/json"},
+        body: JSON.stringify({lat: pos.coords.latitude, lng: pos.coords.longitude})
+      }).catch(() => {});
+    },
+    () => {},
+    {enableHighAccuracy: false, maximumAge: 60000, timeout: 20000}
+  );
+}
+vigiarPosicao();
 
 function icone(texto, classe) {
   return L.divIcon({className: "", html: '<div class="num ' + (classe || "") + '">' + texto + "</div>", iconSize: [26, 26]});
