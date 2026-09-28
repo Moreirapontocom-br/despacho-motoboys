@@ -430,6 +430,40 @@ def despachar():
         _trava_despacho.release()
 
 
+class Atribuicao(BaseModel):
+    motoboy_id: str = Field(min_length=1)
+
+
+@app.post("/pedidos/{pedido_id}/atribuir", dependencies=[Depends(exigir_chave)])
+def atribuir_manual(pedido_id: str, corpo: Atribuicao):
+    """Manda um pedido pendente direto para um motoboy escolhido, pulando o
+    agrupamento automático. A parada entra na melhor posição da rota que esse
+    motoboy já tem (recalculada), não necessariamente no fim. Funciona mesmo
+    se o motoboy estiver fora de turno, já que é uma escolha manual do restaurante."""
+    if not _trava_despacho.acquire(timeout=15):
+        raise HTTPException(status_code=503, detail="Já existe um despacho em andamento. Tente de novo em alguns segundos.")
+    try:
+        with engine.begin() as con:
+            pedido = con.execute(text("SELECT id, endereco, lat, lng FROM pedidos WHERE id = :id AND status = 'pendente'"),
+                                  {"id": pedido_id}).first()
+            if pedido is None:
+                raise HTTPException(status_code=404, detail="Pedido não encontrado ou já não está mais pendente")
+            if con.execute(text("SELECT 1 FROM motoboys WHERE id = :id"), {"id": corpo.motoboy_id}).first() is None:
+                raise HTTPException(status_code=404, detail="Motoboy não encontrado")
+
+            ja_tem = [dict(r._mapping) for r in con.execute(text(
+                "SELECT id, endereco, lat, lng FROM pedidos WHERE motoboy_id = :m AND status = 'despachado'"),
+                {"m": corpo.motoboy_id})]
+            novo = {"id": pedido[0], "endereco": pedido[1], "lat": pedido[2], "lng": pedido[3]}
+            rota = ordenar_rota(RESTAURANTE, ja_tem + [novo])
+            for ordem, p in enumerate(rota, start=1):
+                con.execute(text("UPDATE pedidos SET status = 'despachado', motoboy_id = :m, ordem = :o WHERE id = :id"),
+                            {"m": corpo.motoboy_id, "o": ordem, "id": p["id"]})
+        return {"mensagem": "Pedido atribuído", "rota": rota}
+    finally:
+        _trava_despacho.release()
+
+
 @app.get("/status", dependencies=[Depends(exigir_chave)])
 def status():
     with engine.connect() as con:
@@ -566,7 +600,7 @@ PAINEL_HTML = r"""<!DOCTYPE html>
  .linha{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
  .linha input{flex:1;min-width:160px}
  ul{list-style:none;margin:0;padding:0}
- li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #eee}
+ li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #eee;flex-wrap:wrap}
  li:first-child{border-top:0}
  .tag{font-size:.8rem;padding:2px 8px;border-radius:10px;background:#e5e7eb;white-space:nowrap}
  .tag.atrasado{background:#fee2e2;color:#b91c1c;font-weight:600}
@@ -652,7 +686,7 @@ async function api(caminho, metodo, corpo) {
 
 function dizer(el, texto, classe) { el.textContent = texto; el.className = classe || ""; }
 
-$("salvar").onclick = () => { chave = $("chave").value.trim(); sessionStorage.setItem("chave", chave); carregarFila(); carregarMotos(); carregarResumo(); };
+$("salvar").onclick = () => { chave = $("chave").value.trim(); sessionStorage.setItem("chave", chave); atualizarTudo(); };
 
 $("buscar").onclick = async () => {
   const end = $("endereco").value.trim();
@@ -714,11 +748,25 @@ async function carregarFila() {
     r.pedidos.forEach((p) => {
       const li = document.createElement("li");
       if (p.atrasado) { li.className = "atrasado"; atrasados++; }
+      const info = document.createElement("div"); info.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap";
       const t = document.createElement("span"); t.textContent = p.id + " - " + p.endereco;
       const s = document.createElement("span"); s.className = "tag" + (p.atrasado ? " atrasado" : "");
       s.textContent = p.atrasado ? "esperando há mais de " + PEDIDO_ATRASO_MIN_TXT
         : p.status === "pendente" ? "aguardando" : p.motoboy_id + " (parada " + p.ordem + ")";
-      li.append(t, s); ul.append(li);
+      info.append(t, s); li.append(info);
+      if (p.status === "pendente" && listaMotoboys.length) {
+        const sel = document.createElement("select");
+        listaMotoboys.forEach((m) => { const o = document.createElement("option"); o.value = m.id; o.textContent = m.id; sel.append(o); });
+        const bt = document.createElement("button"); bt.textContent = "Atribuir";
+        bt.onclick = async () => {
+          bt.disabled = true;
+          try { await api("/pedidos/" + encodeURIComponent(p.id) + "/atribuir", "POST", {motoboy_id: sel.value}); carregarFila(); }
+          catch (e) { dizer($("msgDespacho"), e.message, "erro"); bt.disabled = false; }
+        };
+        const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(sel, bt);
+        li.append(acoes);
+      }
+      ul.append(li);
     });
     const aviso = $("alertaAtraso");
     if (atrasados) { aviso.style.display = "block"; aviso.textContent = "⚠ " + atrasados + " pedido(s) esperando há mais de " + PEDIDO_ATRASO_MIN_TXT + " sem despachar."; }
@@ -742,12 +790,14 @@ $("despachar").onclick = async () => {
 };
 
 let centro = null;
+let listaMotoboys = [];
 const PEDIDO_ATRASO_MIN_TXT = "__PEDIDO_ATRASO_MIN__ min";
 async function carregarMotos() {
   if (!chave) return;
   try {
     const r = await api("/motoboys");
     centro = r.centro;
+    listaMotoboys = r.motoboys;
     const ul = $("listaMoto"); ul.innerHTML = "";
     if (!r.motoboys.length) { const li = document.createElement("li"); li.textContent = "Nenhum motoboy cadastrado."; ul.append(li); }
     r.motoboys.forEach((m) => {
@@ -799,8 +849,10 @@ async function carregarResumo() {
   } catch (e) { /* não interrompe o resto do painel por causa disso */ }
 }
 
-carregarFila(); carregarMotos(); carregarResumo();
-setInterval(() => { carregarFila(); carregarMotos(); carregarResumo(); }, 10000);
+// carregarMotos primeiro: carregarFila usa a lista de motoboys para o seletor de "Atribuir".
+async function atualizarTudo() { await carregarMotos(); await carregarFila(); await carregarResumo(); }
+atualizarTudo();
+setInterval(atualizarTudo, 10000);
 </script>
 </body>
 </html>
