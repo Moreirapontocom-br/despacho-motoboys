@@ -13,6 +13,7 @@ cadastrá-lo) e só consegue ver a rota dele, enviando esse código no cabeçalh
 """
 
 import json
+import logging
 import math
 import os
 import secrets
@@ -249,8 +250,15 @@ def buscar_endereco(consulta):
     req = urllib.request.Request(
         "https://nominatim.openstreetmap.org/search?" + params,
         headers={"User-Agent": "despacho-motoboys/1.0 (painel de restaurante pequeno)"})
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        dados = json.load(resp)
+    for tentativa in (1, 2):
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                dados = json.load(resp)
+            break
+        except Exception:
+            if tentativa == 2:
+                raise
+            time.sleep(2)
     return [{"rotulo": x["display_name"], "lat": float(x["lat"]), "lng": float(x["lon"])} for x in dados]
 
 
@@ -258,8 +266,10 @@ def buscar_endereco(consulta):
 def geocodificar(c: Consulta):
     try:
         return {"resultados": buscar_endereco(c.endereco), "centro": RESTAURANTE}
-    except Exception:
-        raise HTTPException(status_code=502, detail="Não consegui consultar o serviço de endereços agora. Tente de novo.")
+    except Exception as e:
+        logging.getLogger("uvicorn.error").warning("Falha na busca de endereço: %r", e)
+        return {"resultados": [], "centro": RESTAURANTE,
+                "aviso": "O serviço de endereços não respondeu agora. Clique no mapa no ponto certo do cliente, ou tente buscar de novo."}
 
 
 @app.get("/pedidos", dependencies=[Depends(exigir_chave)])
@@ -370,7 +380,7 @@ $("buscar").onclick = async () => {
   dizer($("msgBusca"), "Buscando...");
   try {
     const r = await api("/geocodificar", "POST", {endereco: end + ", " + $("cidade").value.trim()});
-    if (!r.resultados.length) { dizer($("msgBusca"), "Não achei o endereço. Clique no mapa no ponto certo.", "erro"); mostrarConfirmacao(r.centro); return; }
+    if (!r.resultados.length) { dizer($("msgBusca"), r.aviso || "Não achei o endereço. Clique no mapa no ponto certo.", "erro"); mostrarConfirmacao(r.centro); return; }
     dizer($("msgBusca"), "Clique no endereço correto:");
     r.resultados.forEach((c) => {
       const li = document.createElement("li");
