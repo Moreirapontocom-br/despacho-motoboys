@@ -11,9 +11,14 @@ O motoboy não usa a API_KEY. Cada motoboy tem um código próprio (definido ao
 cadastrá-lo) e só consegue ver a rota dele, enviando esse código no cabeçalho X-Codigo.
 """
 
+import json
 import math
 import os
 import secrets
+import threading
+import time
+import urllib.parse
+import urllib.request
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
@@ -196,6 +201,206 @@ def status():
         por_status = {s: n for s, n in con.execute(text("SELECT status, COUNT(*) FROM pedidos GROUP BY status"))}
         motoboys = con.execute(text("SELECT COUNT(*) FROM motoboys")).scalar()
     return {"pedidos_por_status": por_status, "motoboys_cadastrados": motoboys}
+
+
+# ---------------------------------------------------------------------
+# Painel do restaurante (protegido pela API_KEY digitada na própria página)
+# ---------------------------------------------------------------------
+class Consulta(BaseModel):
+    endereco: str = Field(min_length=3, max_length=300)
+
+
+_trava_geo = threading.Lock()
+_ultimo_geo = 0.0
+
+
+def buscar_endereco(consulta):
+    """Endereço em texto -> lista de lat/lng candidatos (Nominatim/OpenStreetMap).
+    A regra do serviço gratuito pede no máximo 1 consulta por segundo e um
+    User-Agent que identifique o aplicativo; ambos são respeitados aqui."""
+    global _ultimo_geo
+    with _trava_geo:
+        espera = 1.1 - (time.time() - _ultimo_geo)
+        if espera > 0:
+            time.sleep(espera)
+        _ultimo_geo = time.time()
+    d = 0.2  # ~22 km em volta do restaurante: só procura nesta região
+    params = urllib.parse.urlencode({
+        "q": consulta, "format": "jsonv2", "limit": 5, "countrycodes": "br",
+        "accept-language": "pt-BR", "bounded": 1,
+        "viewbox": f"{RESTAURANTE['lng'] - d},{RESTAURANTE['lat'] + d},{RESTAURANTE['lng'] + d},{RESTAURANTE['lat'] - d}",
+    })
+    req = urllib.request.Request(
+        "https://nominatim.openstreetmap.org/search?" + params,
+        headers={"User-Agent": "despacho-motoboys/1.0 (painel de restaurante pequeno)"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        dados = json.load(resp)
+    return [{"rotulo": x["display_name"], "lat": float(x["lat"]), "lng": float(x["lon"])} for x in dados]
+
+
+@app.post("/geocodificar", dependencies=[Depends(exigir_chave)])
+def geocodificar(c: Consulta):
+    try:
+        return {"resultados": buscar_endereco(c.endereco)}
+    except Exception:
+        raise HTTPException(status_code=502, detail="Não consegui consultar o serviço de endereços agora. Tente de novo.")
+
+
+@app.get("/pedidos", dependencies=[Depends(exigir_chave)])
+def listar_pedidos():
+    """Pedidos pendentes e em rota (os concluídos não aparecem)."""
+    with engine.connect() as con:
+        linhas = [dict(r._mapping) for r in con.execute(text(
+            "SELECT id, endereco, status, motoboy_id, ordem FROM pedidos WHERE status <> 'concluido' "
+            "ORDER BY status, motoboy_id, ordem, criado_em"))]
+    return {"pedidos": linhas}
+
+
+@app.get("/painel")
+def pagina_do_painel():
+    """Página do restaurante. Não contém dados: eles só aparecem depois de digitar a API_KEY."""
+    return HTMLResponse(PAINEL_HTML)
+
+
+PAINEL_HTML = r"""<!DOCTYPE html>
+<html lang="pt-BR" translate="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="google" content="notranslate">
+<title>Painel do restaurante</title>
+<style>
+ body{font-family:system-ui,sans-serif;margin:0;background:#f5f5f5;color:#222}
+ header{padding:12px 16px;background:#1f2937;color:#fff;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+ main{max-width:720px;margin:0 auto;padding:12px}
+ section{background:#fff;border-radius:10px;padding:14px;margin:12px 0}
+ h2{margin:0 0 10px;font-size:1.05rem}
+ input{padding:8px;border-radius:6px;border:1px solid #ccc;font-size:1rem}
+ button{padding:8px 14px;border:0;border-radius:6px;background:#2563eb;color:#fff;font-size:1rem;cursor:pointer}
+ button.verde{background:#10b981} button:disabled{opacity:.5}
+ .linha{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+ .linha input{flex:1;min-width:160px}
+ ul{list-style:none;margin:0;padding:0}
+ li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #eee}
+ li:first-child{border-top:0}
+ .tag{font-size:.8rem;padding:2px 8px;border-radius:10px;background:#e5e7eb;white-space:nowrap}
+ .ok{color:#047857} .erro{color:#b91c1c}
+</style>
+</head>
+<body>
+<header>
+ <strong>Chave do restaurante:</strong>
+ <input id="chave" type="password" placeholder="cole a API_KEY aqui" size="24">
+ <button id="salvar">Entrar</button>
+</header>
+<main>
+ <section>
+  <h2>1. Novo pedido</h2>
+  <div class="linha">
+   <input id="endereco" placeholder="Rua e número (ex.: Rua Tal, 123, Bairro)">
+   <input id="cidade" value="Itabira, MG" size="12">
+   <button id="buscar">Buscar endereço</button>
+  </div>
+  <div id="msgBusca"></div>
+  <ul id="candidatos"></ul>
+ </section>
+ <section>
+  <h2>2. Pedidos na fila</h2>
+  <ul id="fila"></ul>
+  <div class="linha" style="margin-top:10px">
+   <button id="despachar" class="verde">Despachar agora</button>
+  </div>
+  <div id="msgDespacho"></div>
+ </section>
+</main>
+<script>
+let chave = sessionStorage.getItem("chave") || "";
+const $ = (i) => document.getElementById(i);
+$("chave").value = chave;
+let textoDigitado = "";
+
+async function api(caminho, metodo, corpo) {
+  const resp = await fetch(caminho, {
+    method: metodo || "GET",
+    headers: {"X-API-Key": chave, "Content-Type": "application/json"},
+    body: corpo ? JSON.stringify(corpo) : undefined
+  });
+  if (resp.status === 401) throw new Error("Chave incorreta.");
+  if (!resp.ok) { let d = ""; try { d = (await resp.json()).detail; } catch (e) {} throw new Error(d || "Erro " + resp.status); }
+  return resp.json();
+}
+
+function dizer(el, texto, classe) { el.textContent = texto; el.className = classe || ""; }
+
+$("salvar").onclick = () => { chave = $("chave").value.trim(); sessionStorage.setItem("chave", chave); carregarFila(); };
+
+$("buscar").onclick = async () => {
+  const end = $("endereco").value.trim();
+  if (end.length < 3) { dizer($("msgBusca"), "Digite o endereço.", "erro"); return; }
+  textoDigitado = end;
+  $("candidatos").innerHTML = "";
+  dizer($("msgBusca"), "Buscando...");
+  try {
+    const r = await api("/geocodificar", "POST", {endereco: end + ", " + $("cidade").value.trim()});
+    if (!r.resultados.length) { dizer($("msgBusca"), "Não achei. Tente sem o bairro ou confira o nome da rua.", "erro"); return; }
+    dizer($("msgBusca"), "Clique no endereço correto:");
+    r.resultados.forEach((c) => {
+      const li = document.createElement("li");
+      const t = document.createElement("span"); t.textContent = c.rotulo;
+      const b = document.createElement("button"); b.textContent = "Usar este";
+      b.onclick = () => criarPedido(c, b);
+      li.append(t, b); $("candidatos").append(li);
+    });
+  } catch (e) { dizer($("msgBusca"), e.message, "erro"); }
+};
+
+async function criarPedido(c, botao) {
+  botao.disabled = true;
+  const id = "P" + Date.now().toString(36).toUpperCase();
+  try {
+    await api("/pedidos", "POST", {id: id, endereco: textoDigitado, lat: c.lat, lng: c.lng});
+    dizer($("msgBusca"), "Pedido " + id + " criado.", "ok");
+    $("candidatos").innerHTML = ""; $("endereco").value = "";
+    carregarFila();
+  } catch (e) { dizer($("msgBusca"), e.message, "erro"); botao.disabled = false; }
+}
+
+async function carregarFila() {
+  if (!chave) return;
+  try {
+    const r = await api("/pedidos");
+    const ul = $("fila"); ul.innerHTML = "";
+    if (!r.pedidos.length) { const li = document.createElement("li"); li.textContent = "Nenhum pedido na fila."; ul.append(li); }
+    r.pedidos.forEach((p) => {
+      const li = document.createElement("li");
+      const t = document.createElement("span"); t.textContent = p.id + " - " + p.endereco;
+      const s = document.createElement("span"); s.className = "tag";
+      s.textContent = p.status === "pendente" ? "aguardando" : p.motoboy_id + " (parada " + p.ordem + ")";
+      li.append(t, s); ul.append(li);
+    });
+  } catch (e) { dizer($("msgDespacho"), e.message, "erro"); }
+}
+
+$("despachar").onclick = async () => {
+  $("despachar").disabled = true;
+  dizer($("msgDespacho"), "Despachando...");
+  try {
+    const r = await api("/despachar", "POST");
+    if (r.mensagem) { dizer($("msgDespacho"), r.mensagem, "erro"); }
+    else {
+      const partes = Object.entries(r.rotas).map(([m, l]) => m + ": " + l.length + " pedido(s)");
+      dizer($("msgDespacho"), "Despachado! " + partes.join(" | "), "ok");
+    }
+    carregarFila();
+  } catch (e) { dizer($("msgDespacho"), e.message, "erro"); }
+  $("despachar").disabled = false;
+};
+
+carregarFila(); setInterval(carregarFila, 10000);
+</script>
+</body>
+</html>
+"""
 
 
 # ---------------------------------------------------------------------
