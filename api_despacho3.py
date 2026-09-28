@@ -182,6 +182,29 @@ def cadastrar_motoboy(motoboy: Motoboy):
     return {"mensagem": "Motoboy disponível", "total_disponiveis": total}
 
 
+@app.get("/motoboys", dependencies=[Depends(exigir_chave)])
+def listar_motoboys():
+    """Lista os motoboys (sem os códigos) e quantas paradas cada um tem em aberto."""
+    with engine.connect() as con:
+        linhas = [dict(r._mapping) for r in con.execute(text(
+            "SELECT m.id, (SELECT COUNT(*) FROM pedidos p WHERE p.motoboy_id = m.id AND p.status = 'despachado') AS paradas "
+            "FROM motoboys m ORDER BY m.id"))]
+    return {"motoboys": linhas, "centro": RESTAURANTE}
+
+
+@app.delete("/motoboys/{motoboy_id}", dependencies=[Depends(exigir_chave)])
+def remover_motoboy(motoboy_id: str):
+    """Remove o motoboy. As paradas que ele ainda não entregou voltam para a fila."""
+    with engine.begin() as con:
+        r = con.execute(text("DELETE FROM motoboys WHERE id = :id"), {"id": motoboy_id})
+        if r.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Motoboy não encontrado")
+        devolvidos = con.execute(text(
+            "UPDATE pedidos SET status = 'pendente', motoboy_id = NULL, ordem = NULL "
+            "WHERE motoboy_id = :id AND status = 'despachado'"), {"id": motoboy_id}).rowcount
+    return {"mensagem": "Motoboy removido", "pedidos_devolvidos": devolvidos}
+
+
 @app.post("/despachar", dependencies=[Depends(exigir_chave)])
 def despachar():
     """Agrupa os pedidos pendentes, monta as rotas e distribui entre os motoboys.
@@ -349,6 +372,17 @@ PAINEL_HTML = r"""<!DOCTYPE html>
   </div>
   <div id="msgDespacho"></div>
  </section>
+ <section>
+  <h2>3. Motoboys</h2>
+  <ul id="listaMoto"></ul>
+  <div class="linha" style="margin-top:10px">
+   <input id="motoNome" placeholder="Nome (ex.: Carlos)">
+   <input id="motoCodigo" placeholder="Código (mínimo 6)">
+   <button id="salvarMoto">Salvar motoboy</button>
+  </div>
+  <div style="font-size:.9rem;color:#555">Nome já existente: o código dele é trocado. O nome vale com maiúsculas e minúsculas.</div>
+  <div id="msgMoto" style="word-break:break-all"></div>
+ </section>
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script>
@@ -370,7 +404,7 @@ async function api(caminho, metodo, corpo) {
 
 function dizer(el, texto, classe) { el.textContent = texto; el.className = classe || ""; }
 
-$("salvar").onclick = () => { chave = $("chave").value.trim(); sessionStorage.setItem("chave", chave); carregarFila(); };
+$("salvar").onclick = () => { chave = $("chave").value.trim(); sessionStorage.setItem("chave", chave); carregarFila(); carregarMotos(); };
 
 $("buscar").onclick = async () => {
   const end = $("endereco").value.trim();
@@ -453,7 +487,47 @@ $("despachar").onclick = async () => {
   $("despachar").disabled = false;
 };
 
-carregarFila(); setInterval(carregarFila, 10000);
+let centro = null;
+async function carregarMotos() {
+  if (!chave) return;
+  try {
+    const r = await api("/motoboys");
+    centro = r.centro;
+    const ul = $("listaMoto"); ul.innerHTML = "";
+    if (!r.motoboys.length) { const li = document.createElement("li"); li.textContent = "Nenhum motoboy cadastrado."; ul.append(li); }
+    r.motoboys.forEach((m) => {
+      const li = document.createElement("li");
+      const t = document.createElement("span"); t.textContent = m.id + " (" + m.paradas + " parada(s) em aberto)";
+      const b = document.createElement("button"); b.textContent = "Remover"; b.style.background = "#b91c1c";
+      b.onclick = async () => {
+        if (!confirm("Remover " + m.id + "?" + (m.paradas ? "\nAs " + m.paradas + " parada(s) dele voltam para a fila." : ""))) return;
+        try { await api("/motoboys/" + encodeURIComponent(m.id), "DELETE"); dizer($("msgMoto"), m.id + " removido.", "ok"); carregarMotos(); carregarFila(); }
+        catch (e) { dizer($("msgMoto"), e.message, "erro"); }
+      };
+      li.append(t, b); ul.append(li);
+    });
+  } catch (e) { dizer($("msgMoto"), e.message, "erro"); }
+}
+
+$("salvarMoto").onclick = async () => {
+  const nome = $("motoNome").value.trim(), codigo = $("motoCodigo").value.trim();
+  if (!nome) { dizer($("msgMoto"), "Digite o nome do motoboy.", "erro"); return; }
+  if (codigo.length < 6) { dizer($("msgMoto"), "O código precisa ter pelo menos 6 caracteres.", "erro"); return; }
+  $("salvarMoto").disabled = true;
+  try {
+    if (!centro) await carregarMotos();
+    if (!centro) throw new Error("Entre com a chave primeiro.");
+    await api("/motoboys", "POST", {id: nome, codigo: codigo, lat: centro.lat, lng: centro.lng});
+    const link = location.origin + "/motoboy?id=" + encodeURIComponent(nome) + "&codigo=" + encodeURIComponent(codigo);
+    dizer($("msgMoto"), "Salvo! Link para enviar ao motoboy: " + link, "ok");
+    $("motoNome").value = ""; $("motoCodigo").value = "";
+    carregarMotos();
+  } catch (e) { dizer($("msgMoto"), e.message, "erro"); }
+  $("salvarMoto").disabled = false;
+};
+
+carregarFila(); carregarMotos();
+setInterval(() => { carregarFila(); carregarMotos(); }, 10000);
 </script>
 </body>
 </html>
