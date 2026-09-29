@@ -29,7 +29,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
@@ -138,7 +138,7 @@ with engine.begin() as con:
 # Migração da tabela de pedidos. As colunas de endereço separado (rua, número,
 # bairro...) são opcionais: pedidos antigos ficam só com "endereco" e continuam funcionando.
 CAMPOS_ENDERECO = ("rua", "numero", "bairro", "complemento", "referencia", "cep")
-for _coluna in ["concluido_em TIMESTAMP"] + [f"{c} TEXT" for c in CAMPOS_ENDERECO]:
+for _coluna in ["concluido_em TIMESTAMP", "telefone TEXT", "cancelado_em TIMESTAMP"] + [f"{c} TEXT" for c in CAMPOS_ENDERECO]:
     try:
         with engine.begin() as con:
             con.execute(text(f"ALTER TABLE pedidos ADD COLUMN {_coluna}"))
@@ -149,20 +149,83 @@ for _coluna in ["concluido_em TIMESTAMP"] + [f"{c} TEXT" for c in CAMPOS_ENDEREC
 # ---------------------------------------------------------------------
 # Segurança
 # ---------------------------------------------------------------------
-def exigir_chave(x_api_key: str = Header(default="")):
+# Impede que despacho, atribuição, edição e cancelamento mexam nos mesmos pedidos ao mesmo tempo.
+_trava_despacho = threading.Lock()
+
+# Limite de tentativas erradas (chave do painel e código do motoboy).
+# Fica na memória do servidor: se ele reiniciar, os contadores zeram (aceitável).
+# Contamos por endereço de internet (IP) e, no caso do motoboy, também por nome,
+# com um limite maior, para que alguém tentando de vários IPs também seja barrado.
+JANELA_TENTATIVAS_S = 10 * 60   # conta os erros dos últimos 10 minutos
+BLOQUEIO_S = 15 * 60            # tempo de bloqueio depois de passar do limite
+LIMITE_POR_IP = 8
+LIMITE_POR_MOTOBOY = 30
+_trava_tentativas = threading.Lock()
+_erros = {}          # chave -> lista de horários dos erros
+_bloqueado_ate = {}  # chave -> horário em que o bloqueio acaba
+
+
+def _ip(request: Request):
+    """IP de quem chamou. No Render, o IP real vem no cabeçalho X-Forwarded-For."""
+    encaminhado = request.headers.get("x-forwarded-for", "")
+    if encaminhado:
+        return encaminhado.split(",")[0].strip()
+    return request.client.host if request.client else "?"
+
+
+def _checar_bloqueio(*chaves):
+    agora = time.time()
+    with _trava_tentativas:
+        restante = max((_bloqueado_ate.get(k, 0) - agora for k in chaves), default=0)
+    if restante > 0:
+        minutos = math.ceil(restante / 60)
+        raise HTTPException(status_code=429,
+                            detail=f"Muitas tentativas erradas. Espere {minutos} minuto(s) e tente de novo.")
+
+
+def _registrar_erro(chave, limite):
+    agora = time.time()
+    with _trava_tentativas:
+        lista = [t for t in _erros.get(chave, []) if agora - t < JANELA_TENTATIVAS_S]
+        lista.append(agora)
+        _erros[chave] = lista
+        if len(lista) >= limite:
+            _bloqueado_ate[chave] = agora + BLOQUEIO_S
+            _erros.pop(chave, None)
+        if len(_erros) > 5000:  # limpeza para a memória não crescer sem fim
+            for k in [k for k, v in _erros.items() if agora - v[-1] > JANELA_TENTATIVAS_S]:
+                _erros.pop(k, None)
+            for k in [k for k, t in _bloqueado_ate.items() if t < agora]:
+                _bloqueado_ate.pop(k, None)
+
+
+def exigir_chave(request: Request, x_api_key: str = Header(default="")):
     if not API_KEY:
         raise HTTPException(status_code=500, detail="API_KEY não configurada no servidor")
+    chave_ip = "painel-ip:" + _ip(request)
+    _checar_bloqueio(chave_ip)
     if not secrets.compare_digest(x_api_key.encode(), API_KEY.encode()):
+        _registrar_erro(chave_ip, LIMITE_POR_IP)
         raise HTTPException(status_code=401, detail="Chave de API inválida ou ausente")
+
+
+def conferir_codigo(con, request: Request, motoboy_id: str, codigo: str):
+    """Confere o código do motoboy, com limite de tentativas erradas."""
+    chave_ip, chave_moto = "moto-ip:" + _ip(request), "moto:" + motoboy_id.lower()
+    _checar_bloqueio(chave_ip, chave_moto)
+    m = con.execute(text("SELECT codigo FROM motoboys WHERE id = :id"), {"id": motoboy_id}).first()
+    if m is None or not secrets.compare_digest(codigo.encode(), m[0].encode()):
+        _registrar_erro(chave_ip, LIMITE_POR_IP)
+        _registrar_erro(chave_moto, LIMITE_POR_MOTOBOY)
+        raise HTTPException(status_code=401, detail="Nome ou código incorretos")
 
 
 # ---------------------------------------------------------------------
 # Formatos de dados aceitos
 # ---------------------------------------------------------------------
-class Pedido(BaseModel):
+class DadosPedido(BaseModel):
     """"endereco" é o endereço completo numa linha (usado no Google Maps).
     Os campos separados são opcionais, para quem chama a API do jeito antigo."""
-    id: str = Field(min_length=1, max_length=64)
     endereco: str = Field(min_length=1, max_length=300)
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
@@ -172,6 +235,26 @@ class Pedido(BaseModel):
     complemento: Optional[str] = Field(default=None, max_length=120)
     referencia: Optional[str] = Field(default=None, max_length=200)
     cep: Optional[str] = Field(default=None, max_length=12)
+    telefone: Optional[str] = Field(default=None, max_length=20)
+
+
+class Pedido(DadosPedido):
+    id: str = Field(min_length=1, max_length=64)
+
+
+def _limpar_dados(con, dados):
+    """Campos vazios viram NULL. Se o bairro já foi usado antes com outra grafia de
+    maiúsculas/minúsculas ("amazonas" x "Amazonas"), usa a grafia já salva."""
+    for c in CAMPOS_ENDERECO + ("telefone",):
+        dados[c] = (dados.get(c) or "").strip() or None
+    if dados["bairro"]:
+        existente = con.execute(text(
+            "SELECT bairro FROM pedidos WHERE LOWER(bairro) = LOWER(:b) LIMIT 1"), {"b": dados["bairro"]}).scalar()
+        if existente and existente != dados["bairro"]:
+            # Corrige também no endereço de uma linha (formato "Rua, Nº - Bairro, Cidade").
+            dados["endereco"] = dados["endereco"].replace(f" - {dados['bairro']},", f" - {existente},", 1)
+            dados["bairro"] = existente
+    return dados
 
 
 class Motoboy(BaseModel):
@@ -330,27 +413,57 @@ def atribuir_motoboys(lotes, motoboys, carga_inicial=None):
 # ---------------------------------------------------------------------
 @app.post("/pedidos", dependencies=[Depends(exigir_chave)])
 def criar_pedido(pedido: Pedido):
-    """Registra um pedido novo. Se o id já existir, ele é ignorado (evita duplicar).
-    Campos de endereço vazios viram NULL. Se o bairro já foi usado antes com outra
-    grafia de maiúsculas/minúsculas ("amazonas" x "Amazonas"), usa a grafia já salva."""
-    dados = pedido.model_dump()
-    for c in CAMPOS_ENDERECO:
-        dados[c] = (dados[c] or "").strip() or None
+    """Registra um pedido novo. Se o id já existir, ele é ignorado (evita duplicar)."""
     with engine.begin() as con:
-        if dados["bairro"]:
-            existente = con.execute(text(
-                "SELECT bairro FROM pedidos WHERE LOWER(bairro) = LOWER(:b) LIMIT 1"), {"b": dados["bairro"]}).scalar()
-            if existente and existente != dados["bairro"]:
-                # Corrige também no endereço de uma linha (formato "Rua, Nº - Bairro, Cidade").
-                dados["endereco"] = dados["endereco"].replace(f" - {dados['bairro']},", f" - {existente},", 1)
-                dados["bairro"] = existente
+        dados = _limpar_dados(con, pedido.model_dump())
         r = con.execute(text(
-            "INSERT INTO pedidos (id, endereco, lat, lng, rua, numero, bairro, complemento, referencia, cep) "
-            "VALUES (:id, :endereco, :lat, :lng, :rua, :numero, :bairro, :complemento, :referencia, :cep) "
+            "INSERT INTO pedidos (id, endereco, lat, lng, rua, numero, bairro, complemento, referencia, cep, telefone) "
+            "VALUES (:id, :endereco, :lat, :lng, :rua, :numero, :bairro, :complemento, :referencia, :cep, :telefone) "
             "ON CONFLICT (id) DO NOTHING"), dados)
         criado = r.rowcount == 1
         total = con.execute(text("SELECT COUNT(*) FROM pedidos WHERE status = 'pendente'")).scalar()
     return {"mensagem": "Pedido recebido" if criado else "Pedido já existia (ignorado)", "total_pendentes": total}
+
+
+@app.put("/pedidos/{pedido_id}", dependencies=[Depends(exigir_chave)])
+def editar_pedido(pedido_id: str, pedido: DadosPedido):
+    """Corrige endereço, ponto no mapa ou telefone de um pedido que ainda está na fila.
+    Pedido já despachado não pode ser editado: cancele e crie de novo, para a rota
+    do motoboy não mudar sem ele perceber."""
+    if not _trava_despacho.acquire(timeout=15):
+        raise HTTPException(status_code=503, detail="Já existe um despacho em andamento. Tente de novo em alguns segundos.")
+    try:
+        with engine.begin() as con:
+            dados = _limpar_dados(con, pedido.model_dump())
+            dados["id"] = pedido_id
+            r = con.execute(text(
+                "UPDATE pedidos SET endereco = :endereco, lat = :lat, lng = :lng, rua = :rua, numero = :numero, "
+                "bairro = :bairro, complemento = :complemento, referencia = :referencia, cep = :cep, telefone = :telefone "
+                "WHERE id = :id AND status = 'pendente'"), dados)
+            if r.rowcount == 0:
+                raise HTTPException(status_code=409, detail="Esse pedido não está mais na fila (já foi despachado, entregue ou cancelado).")
+        return {"mensagem": "Pedido atualizado"}
+    finally:
+        _trava_despacho.release()
+
+
+@app.post("/pedidos/{pedido_id}/cancelar", dependencies=[Depends(exigir_chave)])
+def cancelar_pedido(pedido_id: str):
+    """Cancela um pedido na fila ou já em rota. Em rota, ele some da tela do motoboy
+    na próxima atualização (5 s). O pedido fica guardado no banco como 'cancelado'."""
+    if not _trava_despacho.acquire(timeout=15):
+        raise HTTPException(status_code=503, detail="Já existe um despacho em andamento. Tente de novo em alguns segundos.")
+    try:
+        with engine.begin() as con:
+            atual = con.execute(text("SELECT status, motoboy_id FROM pedidos WHERE id = :id"), {"id": pedido_id}).first()
+            if atual is None or atual[0] not in ("pendente", "despachado"):
+                raise HTTPException(status_code=409, detail="Esse pedido não pode mais ser cancelado (já foi entregue ou cancelado).")
+            con.execute(text("UPDATE pedidos SET status = 'cancelado', cancelado_em = CURRENT_TIMESTAMP WHERE id = :id"),
+                        {"id": pedido_id})
+        aviso = f" Avise {atual[1]}: a parada já saiu da rota dele." if atual[0] == "despachado" else ""
+        return {"mensagem": f"Pedido {pedido_id} cancelado.{aviso}"}
+    finally:
+        _trava_despacho.release()
 
 
 @app.post("/motoboys", dependencies=[Depends(exigir_chave)])
@@ -407,7 +520,6 @@ def definir_turno(motoboy_id: str, t: Turno):
     return {"mensagem": "Turno atualizado"}
 
 
-_trava_despacho = threading.Lock()
 
 
 @app.post("/despachar", dependencies=[Depends(exigir_chave)])
@@ -548,13 +660,13 @@ def historico_csv(dias: int = 30):
     inicio_utc = inicio_local - timedelta(hours=TIMEZONE_OFFSET_HORAS)
     with engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, endereco, bairro, complemento, referencia, motoboy_id, criado_em, concluido_em FROM pedidos "
+            "SELECT id, endereco, bairro, complemento, referencia, telefone, motoboy_id, criado_em, concluido_em FROM pedidos "
             "WHERE status = 'concluido' AND concluido_em IS NOT NULL ORDER BY concluido_em"))]
 
     saida = io.StringIO()
     saida.write("\ufeff")  # marca de ordem de bytes: sem isso o Excel no Windows pode exibir acentos errados
     escritor = csv.writer(saida, delimiter=";")
-    escritor.writerow(["Pedido", "Endereço", "Bairro", "Complemento", "Referência",
+    escritor.writerow(["Pedido", "Endereço", "Bairro", "Complemento", "Referência", "Telefone",
                        "Motoboy", "Criado em", "Entregue em", "Tempo (min)"])
     for p in linhas:
         concluido_t = _parse_ts(p["concluido_em"])
@@ -563,7 +675,7 @@ def historico_csv(dias: int = 30):
         criado_t = _parse_ts(p["criado_em"])
         tempo = round((concluido_t - criado_t).total_seconds() / 60, 1) if criado_t is not None else ""
         escritor.writerow([p["id"], p["endereco"], p["bairro"] or "", p["complemento"] or "",
-                           p["referencia"] or "", p["motoboy_id"] or "",
+                           p["referencia"] or "", p["telefone"] or "", p["motoboy_id"] or "",
                             _fmt_local(criado_t), _fmt_local(concluido_t), tempo])
 
     nome_arquivo = f"historico_{agora_local.strftime('%Y-%m-%d')}.csv"
@@ -658,8 +770,8 @@ def listar_pedidos():
     vem marcado com "atrasado": true, para o painel destacar."""
     with engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, endereco, complemento, referencia, status, motoboy_id, ordem, criado_em "
-            "FROM pedidos WHERE status <> 'concluido' "
+            "SELECT id, endereco, rua, numero, bairro, complemento, referencia, cep, telefone, lat, lng, "
+            "status, motoboy_id, ordem, criado_em FROM pedidos WHERE status IN ('pendente', 'despachado') "
             "ORDER BY status, motoboy_id, ordem, criado_em"))]
     agora = datetime.utcnow()
     for p in linhas:
@@ -718,6 +830,9 @@ PAINEL_HTML = r"""<!DOCTYPE html>
  .cartao .num{font-size:1.6rem;font-weight:700} .cartao .rot{font-size:.8rem;color:#555}
  .sn{display:flex;align-items:center;gap:4px;font-size:.9rem;white-space:nowrap}
  .extra{font-size:.85rem;color:#555}
+ .aviso-edicao{background:#fef3c7;color:#92400e;padding:8px;border-radius:6px;margin-bottom:8px;font-weight:600}
+ button.perigo{background:#b91c1c}
+ .acoes{display:flex;gap:6px;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -742,7 +857,8 @@ PAINEL_HTML = r"""<!DOCTYPE html>
   <div id="msgHistorico"></div>
  </section>
  <section>
-  <h2>1. Novo pedido</h2>
+  <h2 id="tituloPedido">1. Novo pedido</h2>
+  <div id="avisoEdicao" class="aviso-edicao" style="display:none"></div>
   <div class="linha">
    <input id="rua" placeholder="Rua * (ex.: Rua São Paulo)" style="flex:3">
    <input id="numero" placeholder="Número *" style="flex:1;min-width:90px">
@@ -758,6 +874,9 @@ PAINEL_HTML = r"""<!DOCTYPE html>
   </div>
   <div class="linha">
    <input id="referencia" placeholder="Ponto de referência (ex.: em frente à padaria)">
+  </div>
+  <div class="linha">
+   <input id="telefone" placeholder="Telefone do cliente (opcional) ex.: (31) 99999-9999" inputmode="tel" maxlength="16">
   </div>
   <div class="linha">
    <input id="cidade" value="Itabira, MG" style="flex:0 1 160px;min-width:120px" title="Cidade, UF">
@@ -809,7 +928,12 @@ async function api(caminho, metodo, corpo) {
     headers: {"X-API-Key": chave, "Content-Type": "application/json"},
     body: corpo ? JSON.stringify(corpo) : undefined
   });
-  if (resp.status === 401) throw new Error("Chave incorreta.");
+  if (resp.status === 401) {
+    // Para de consultar sozinho com a chave errada (senão o servidor bloqueia o computador por excesso de erros).
+    chave = ""; sessionStorage.removeItem("chave");
+    throw new Error("Chave incorreta. Digite de novo e clique em Entrar.");
+  }
+  if (resp.status === 429) { chave = ""; }
   if (!resp.ok) { let d = ""; try { d = (await resp.json()).detail; } catch (e) {} throw new Error(d || "Erro " + resp.status); }
   return resp.json();
 }
@@ -824,6 +948,14 @@ $("semNumero").onchange = () => {
   if (sn) $("numero").value = "";
 };
 
+$("telefone").oninput = () => {
+  const d = $("telefone").value.replace(/\D/g, "").slice(0, 11);
+  let t = d;
+  if (d.length > 2) t = "(" + d.slice(0, 2) + ") " + d.slice(2);
+  if (d.length > 6) t = "(" + d.slice(0, 2) + ") " + d.slice(2, d.length - 4) + "-" + d.slice(d.length - 4);
+  $("telefone").value = t;
+};
+
 $("cep").oninput = () => {
   const d = $("cep").value.replace(/\D/g, "").slice(0, 8);
   $("cep").value = d.length > 5 ? d.slice(0, 5) + "-" + d.slice(5) : d;
@@ -833,7 +965,7 @@ $("cep").oninput = () => {
 function lerEndereco() {
   const v = (i) => $(i).value.trim().replace(/\s+/g, " ");
   const e = {rua: v("rua"), numero: $("semNumero").checked ? "S/N" : v("numero"), bairro: v("bairro"),
-             complemento: v("complemento"), referencia: v("referencia"), cep: v("cep")};
+             complemento: v("complemento"), referencia: v("referencia"), cep: v("cep"), telefone: v("telefone")};
   const partesCidade = v("cidade").split(",");
   e.cidade = (partesCidade[0] || "").trim();
   e.estado = (partesCidade[1] || "").trim();
@@ -841,15 +973,45 @@ function lerEndereco() {
   if (!e.numero) return {erro: "Digite o número (ou marque \"Sem número\")."};
   if (e.bairro.length < 2) return {erro: "Digite o bairro."};
   if (e.cep && e.cep.replace(/\D/g, "").length !== 8) return {erro: "CEP incompleto (8 números). Pode deixar vazio."};
+  const digitosTel = e.telefone.replace(/\D/g, "").length;
+  if (e.telefone && (digitosTel < 10 || digitosTel > 11)) return {erro: "Telefone incompleto: use DDD + número, ex.: (31) 99999-9999. Pode deixar vazio."};
   // Endereço numa linha, no formato que o Google Maps entende bem. Sem complemento/referência.
   const cidadeUf = e.cidade + (e.estado ? " - " + e.estado : "");
   e.endereco = e.rua + (e.numero !== "S/N" ? ", " + e.numero : "") + " - " + e.bairro + ", " + cidadeUf + (e.cep ? ", " + e.cep : "");
   return e;
 }
 
+let editandoId = null;  // id do pedido sendo corrigido, ou null quando é pedido novo
+
 function limparFormulario() {
-  ["rua", "numero", "bairro", "complemento", "referencia", "cep"].forEach((i) => $(i).value = "");
+  ["rua", "numero", "bairro", "complemento", "referencia", "cep", "telefone"].forEach((i) => $(i).value = "");
   $("semNumero").checked = false; $("numero").disabled = false;
+  editandoId = null;
+  $("tituloPedido").textContent = "1. Novo pedido";
+  $("avisoEdicao").style.display = "none";
+  $("confirmar").textContent = "Confirmar pedido neste ponto";
+}
+
+// Coloca um pedido da fila no formulário para corrigir. Já abre o mapa no ponto salvo:
+// se só mudou o complemento ou o telefone, basta clicar em "Salvar alterações".
+function editarPedido(p) {
+  limparFormulario();
+  editandoId = p.id;
+  $("rua").value = p.rua || p.endereco;  // pedidos antigos só têm o endereço numa linha
+  if (p.numero === "S/N") { $("semNumero").checked = true; $("numero").disabled = true; }
+  else $("numero").value = p.numero || "";
+  $("bairro").value = p.bairro || "";
+  $("complemento").value = p.complemento || "";
+  $("referencia").value = p.referencia || "";
+  $("cep").value = p.cep || "";
+  $("telefone").value = p.telefone || "";
+  $("tituloPedido").textContent = "1. Corrigindo pedido " + p.id;
+  $("avisoEdicao").textContent = "Corrigindo o pedido " + p.id + ". Mudou a rua ou o número? Clique em Buscar endereço. Senão, confira o pino e clique em Salvar alterações.";
+  $("avisoEdicao").style.display = "block";
+  $("confirmar").textContent = "Salvar alterações";
+  $("candidatos").innerHTML = ""; dizer($("msgBusca"), "");
+  mostrarConfirmacao({lat: p.lat, lng: p.lng});
+  $("tituloPedido").scrollIntoView({behavior: "smooth"});
 }
 $("limpar").onclick = () => { limparFormulario(); $("candidatos").innerHTML = ""; $("confirmacao").style.display = "none"; dizer($("msgBusca"), ""); };
 
@@ -889,7 +1051,7 @@ function mostrarConfirmacao(c) {
   $("confirmacao").scrollIntoView({behavior: "smooth", block: "nearest"});
 }
 
-$("cancelar").onclick = () => { $("confirmacao").style.display = "none"; };
+$("cancelar").onclick = () => { $("confirmacao").style.display = "none"; if (editandoId) { limparFormulario(); dizer($("msgBusca"), "Correção cancelada."); } };
 
 $("confirmar").onclick = async () => {
   // Lê os campos de novo: se a pessoa corrigiu o complemento depois de buscar, vale o corrigido.
@@ -897,11 +1059,17 @@ $("confirmar").onclick = async () => {
   if (e.erro) { dizer($("msgBusca"), e.erro, "erro"); return; }
   const ponto = pino.getLatLng();
   $("confirmar").disabled = true;
-  const id = "P" + Date.now().toString(36).toUpperCase();
+  const corpo = {endereco: e.endereco, lat: ponto.lat, lng: ponto.lng, rua: e.rua, numero: e.numero, bairro: e.bairro,
+                 complemento: e.complemento, referencia: e.referencia, cep: e.cep, telefone: e.telefone};
   try {
-    await api("/pedidos", "POST", {id: id, endereco: e.endereco, lat: ponto.lat, lng: ponto.lng,
-      rua: e.rua, numero: e.numero, bairro: e.bairro, complemento: e.complemento, referencia: e.referencia, cep: e.cep});
-    dizer($("msgBusca"), "Pedido " + id + " criado.", "ok");
+    if (editandoId) {
+      await api("/pedidos/" + encodeURIComponent(editandoId), "PUT", corpo);
+      dizer($("msgBusca"), "Pedido " + editandoId + " corrigido.", "ok");
+    } else {
+      const id = "P" + Date.now().toString(36).toUpperCase();
+      await api("/pedidos", "POST", Object.assign({id: id}, corpo));
+      dizer($("msgBusca"), "Pedido " + id + " criado.", "ok");
+    }
     $("candidatos").innerHTML = ""; limparFormulario(); $("confirmacao").style.display = "none";
     carregarFila(); carregarBairros();
   } catch (e) { dizer($("msgBusca"), e.message, "erro"); }
@@ -920,12 +1088,30 @@ async function carregarFila() {
       if (p.atrasado) { li.className = "atrasado"; atrasados++; }
       const info = document.createElement("div"); info.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap";
       const t = document.createElement("span"); t.textContent = p.id + " - " + p.endereco;
-      const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : ""].filter(Boolean).join(" · ");
+      const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : "", p.telefone ? "Tel.: " + p.telefone : ""].filter(Boolean).join(" · ");
       if (extras) { const x = document.createElement("div"); x.className = "extra"; x.textContent = extras; t.append(x); }
       const s = document.createElement("span"); s.className = "tag" + (p.atrasado ? " atrasado" : "");
       s.textContent = p.atrasado ? "esperando há mais de " + PEDIDO_ATRASO_MIN_TXT
         : p.status === "pendente" ? "aguardando" : p.motoboy_id + " (parada " + p.ordem + ")";
       info.append(t, s); li.append(info);
+      const acoes = document.createElement("div"); acoes.className = "acoes";
+      if (p.status === "pendente") {
+        const ed = document.createElement("button"); ed.textContent = "Editar"; ed.className = "cinza";
+        ed.onclick = () => editarPedido(p);
+        acoes.append(ed);
+      }
+      const cx = document.createElement("button"); cx.textContent = "Cancelar pedido"; cx.className = "perigo";
+      cx.onclick = async () => {
+        const emRota = p.status === "despachado";
+        if (!confirm("Cancelar o pedido " + p.id + "?\n" + p.endereco + (emRota ? "\n\nEle já está com " + p.motoboy_id + ": a parada sai da rota dele." : ""))) return;
+        cx.disabled = true;
+        try {
+          const r2 = await api("/pedidos/" + encodeURIComponent(p.id) + "/cancelar", "POST");
+          dizer($("msgDespacho"), r2.mensagem, "ok");
+          if (editandoId === p.id) { limparFormulario(); $("confirmacao").style.display = "none"; }
+          carregarFila(); carregarResumo();
+        } catch (e) { dizer($("msgDespacho"), e.message, "erro"); cx.disabled = false; }
+      };
       if (p.status === "pendente" && listaMotoboys.length) {
         const sel = document.createElement("select");
         listaMotoboys.forEach((m) => { const o = document.createElement("option"); o.value = m.id; o.textContent = m.id; sel.append(o); });
@@ -935,9 +1121,10 @@ async function carregarFila() {
           try { await api("/pedidos/" + encodeURIComponent(p.id) + "/atribuir", "POST", {motoboy_id: sel.value}); carregarFila(); }
           catch (e) { dizer($("msgDespacho"), e.message, "erro"); bt.disabled = false; }
         };
-        const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(sel, bt);
-        li.append(acoes);
+        acoes.append(sel, bt);
       }
+      acoes.append(cx);
+      li.append(acoes);
       ul.append(li);
     });
     const aviso = $("alertaAtraso");
@@ -1064,13 +1251,11 @@ PAINEL_HTML = PAINEL_HTML.replace("__PEDIDO_ATRASO_MIN__", str(int(PEDIDO_ATRASO
 # Área do motoboy (protegida pelo código dele)
 # ---------------------------------------------------------------------
 @app.get("/rotas/{motoboy_id}")
-def rota_do_motoboy(motoboy_id: str, x_codigo: str = Header(default="")):
+def rota_do_motoboy(motoboy_id: str, request: Request, x_codigo: str = Header(default="")):
     with engine.connect() as con:
-        m = con.execute(text("SELECT codigo FROM motoboys WHERE id = :id"), {"id": motoboy_id}).first()
-        if m is None or not secrets.compare_digest(x_codigo.encode(), m[0].encode()):
-            raise HTTPException(status_code=401, detail="Nome ou código incorretos")
+        conferir_codigo(con, request, motoboy_id, x_codigo)
         paradas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, endereco, complemento, referencia, lat, lng FROM pedidos "
+            "SELECT id, endereco, complemento, referencia, telefone, lat, lng FROM pedidos "
             "WHERE motoboy_id = :id AND status = 'despachado' ORDER BY ordem"),
             {"id": motoboy_id})]
     return {"motoboy_id": motoboy_id, "restaurante": RESTAURANTE, "paradas": paradas,
@@ -1078,12 +1263,10 @@ def rota_do_motoboy(motoboy_id: str, x_codigo: str = Header(default="")):
 
 
 @app.post("/rotas/{motoboy_id}/entregar/{pedido_id}")
-def marcar_entregue(motoboy_id: str, pedido_id: str, x_codigo: str = Header(default="")):
+def marcar_entregue(motoboy_id: str, pedido_id: str, request: Request, x_codigo: str = Header(default="")):
     """O motoboy marca uma parada como entregue (precisa do código dele)."""
     with engine.begin() as con:
-        m = con.execute(text("SELECT codigo FROM motoboys WHERE id = :id"), {"id": motoboy_id}).first()
-        if m is None or not secrets.compare_digest(x_codigo.encode(), m[0].encode()):
-            raise HTTPException(status_code=401, detail="Nome ou código incorretos")
+        conferir_codigo(con, request, motoboy_id, x_codigo)
         r = con.execute(text(
             "UPDATE pedidos SET status = 'concluido', concluido_em = CURRENT_TIMESTAMP "
             "WHERE id = :p AND motoboy_id = :m AND status = 'despachado'"),
@@ -1099,14 +1282,12 @@ class Posicao(BaseModel):
 
 
 @app.post("/rotas/{motoboy_id}/posicao")
-def atualizar_posicao(motoboy_id: str, p: Posicao, x_codigo: str = Header(default="")):
+def atualizar_posicao(motoboy_id: str, p: Posicao, request: Request, x_codigo: str = Header(default="")):
     """A página do motoboy chama isto sozinha (a cada ~1 min) quando ele escolhe
     "da minha posição". O despacho usa essa posição, se for recente, para saber
     quem está mais perto de verdade; senão usa a posição do cadastro."""
     with engine.begin() as con:
-        m = con.execute(text("SELECT codigo FROM motoboys WHERE id = :id"), {"id": motoboy_id}).first()
-        if m is None or not secrets.compare_digest(x_codigo.encode(), m[0].encode()):
-            raise HTTPException(status_code=401, detail="Nome ou código incorretos")
+        conferir_codigo(con, request, motoboy_id, x_codigo)
         con.execute(text("UPDATE motoboys SET gps_lat = :lat, gps_lng = :lng, gps_em = CURRENT_TIMESTAMP WHERE id = :id"),
                     {"lat": p.lat, "lng": p.lng, "id": motoboy_id})
     return {"mensagem": "Posição atualizada"}
@@ -1145,6 +1326,7 @@ PAGINA_HTML = r"""<!DOCTYPE html>
  .completa{display:inline-block;margin-left:8px;background:#10b981;color:#fff;padding:6px 10px;border-radius:6px;text-decoration:none}
  #paradas a.sec{background:#6b7280}
  .extra{font-size:.9rem;color:#b45309;font-weight:600;margin-top:3px}
+ #paradas a.ligar{background:#059669}
 </style>
 </head>
 <body>
@@ -1185,7 +1367,7 @@ function vigiarPosicao() {
   vigia = navigator.geolocation.watchPosition(
     (pos) => {
       const agora = Date.now();
-      if (agora - ultimoEnvioGps < 45000) return;  // no máximo 1 envio a cada 45 s
+      if (parado || agora - ultimoEnvioGps < 45000) return;  // no máximo 1 envio a cada 45 s
       ultimoEnvioGps = agora;
       fetch("/rotas/" + encodeURIComponent(id) + "/posicao", {
         method: "POST", headers: {"X-Codigo": codigo, "Content-Type": "application/json"},
@@ -1229,6 +1411,12 @@ function desenhar(dados) {
     a.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + encodeURIComponent(p.endereco);
     const b = document.createElement("a"); b.textContent = "Pelo ponto"; b.target = "_blank"; b.className = "sec";
     b.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + p.lat + "," + p.lng;
+    let lig = null;
+    const digitos = (p.telefone || "").replace(/\D/g, "");
+    if (digitos.length >= 10) {
+      lig = document.createElement("a"); lig.textContent = "Ligar"; lig.className = "ligar";
+      lig.href = "tel:+55" + digitos;
+    }
     const e = document.createElement("button"); e.textContent = "Entregue"; e.className = "ent";
     e.onclick = async () => {
       if (!confirm("Marcar como entregue?\n" + p.endereco + (p.complemento ? "\n" + p.complemento : ""))) return;
@@ -1239,7 +1427,7 @@ function desenhar(dados) {
       } catch (err) { alert("Não consegui registrar a entrega. Tente de novo."); e.disabled = false; return; }
       atualizar();
     };
-    const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(a, b, e);
+    const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(a, b); if (lig) acoes.append(lig); acoes.append(e);
     li.append(t, acoes); lista.append(li);
   });
   const linha = (dados.trajeto && dados.trajeto.length > 1) ? dados.trajeto : pontos;
@@ -1247,11 +1435,19 @@ function desenhar(dados) {
   mapa.fitBounds(pontos, {padding: [30, 30]});
 }
 
+let parado = false;
 async function atualizar() {
+  if (parado) return;
   if (!id) { document.getElementById("msg").textContent = "Digite seu nome e código acima e clique em Ver rota."; return; }
   try {
     const resp = await fetch("/rotas/" + encodeURIComponent(id), {headers: {"X-Codigo": codigo}});
-    if (resp.status === 401) { ultimo = ""; camada.clearLayers(); document.getElementById("paradas").innerHTML = ""; document.getElementById("msg").textContent = "Nome ou código incorretos."; return; }
+    if (resp.status === 401 || resp.status === 429) {
+      // Para de tentar sozinho: repetir com o código errado bloquearia o celular por excesso de erros.
+      parado = true; ultimo = ""; camada.clearLayers(); document.getElementById("paradas").innerHTML = "";
+      let txt = "Nome ou código incorretos. Confira e clique em Ver rota.";
+      if (resp.status === 429) { try { txt = (await resp.json()).detail; } catch (e) {} }
+      document.getElementById("msg").textContent = txt; return;
+    }
     const texto = await resp.text();
     if (texto !== ultimo) { ultimo = texto; desenhar(JSON.parse(texto)); }
   } catch (e) { ultimo = ""; document.getElementById("msg").textContent = "Sem conexão com a API."; }
