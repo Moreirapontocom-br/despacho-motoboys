@@ -27,6 +27,7 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse, Response
@@ -134,11 +135,15 @@ with engine.begin() as con:
             concluido_em TIMESTAMP
         )"""))
 
-try:
-    with engine.begin() as con:
-        con.execute(text("ALTER TABLE pedidos ADD COLUMN concluido_em TIMESTAMP"))
-except Exception:
-    pass
+# Migração da tabela de pedidos. As colunas de endereço separado (rua, número,
+# bairro...) são opcionais: pedidos antigos ficam só com "endereco" e continuam funcionando.
+CAMPOS_ENDERECO = ("rua", "numero", "bairro", "complemento", "referencia", "cep")
+for _coluna in ["concluido_em TIMESTAMP"] + [f"{c} TEXT" for c in CAMPOS_ENDERECO]:
+    try:
+        with engine.begin() as con:
+            con.execute(text(f"ALTER TABLE pedidos ADD COLUMN {_coluna}"))
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------
@@ -155,10 +160,18 @@ def exigir_chave(x_api_key: str = Header(default="")):
 # Formatos de dados aceitos
 # ---------------------------------------------------------------------
 class Pedido(BaseModel):
+    """"endereco" é o endereço completo numa linha (usado no Google Maps).
+    Os campos separados são opcionais, para quem chama a API do jeito antigo."""
     id: str = Field(min_length=1, max_length=64)
     endereco: str = Field(min_length=1, max_length=300)
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
+    rua: Optional[str] = Field(default=None, max_length=150)
+    numero: Optional[str] = Field(default=None, max_length=20)
+    bairro: Optional[str] = Field(default=None, max_length=80)
+    complemento: Optional[str] = Field(default=None, max_length=120)
+    referencia: Optional[str] = Field(default=None, max_length=200)
+    cep: Optional[str] = Field(default=None, max_length=12)
 
 
 class Motoboy(BaseModel):
@@ -317,11 +330,24 @@ def atribuir_motoboys(lotes, motoboys, carga_inicial=None):
 # ---------------------------------------------------------------------
 @app.post("/pedidos", dependencies=[Depends(exigir_chave)])
 def criar_pedido(pedido: Pedido):
-    """Registra um pedido novo. Se o id já existir, ele é ignorado (evita duplicar)."""
+    """Registra um pedido novo. Se o id já existir, ele é ignorado (evita duplicar).
+    Campos de endereço vazios viram NULL. Se o bairro já foi usado antes com outra
+    grafia de maiúsculas/minúsculas ("amazonas" x "Amazonas"), usa a grafia já salva."""
+    dados = pedido.model_dump()
+    for c in CAMPOS_ENDERECO:
+        dados[c] = (dados[c] or "").strip() or None
     with engine.begin() as con:
+        if dados["bairro"]:
+            existente = con.execute(text(
+                "SELECT bairro FROM pedidos WHERE LOWER(bairro) = LOWER(:b) LIMIT 1"), {"b": dados["bairro"]}).scalar()
+            if existente and existente != dados["bairro"]:
+                # Corrige também no endereço de uma linha (formato "Rua, Nº - Bairro, Cidade").
+                dados["endereco"] = dados["endereco"].replace(f" - {dados['bairro']},", f" - {existente},", 1)
+                dados["bairro"] = existente
         r = con.execute(text(
-            "INSERT INTO pedidos (id, endereco, lat, lng) VALUES (:id, :endereco, :lat, :lng) "
-            "ON CONFLICT (id) DO NOTHING"), pedido.model_dump())
+            "INSERT INTO pedidos (id, endereco, lat, lng, rua, numero, bairro, complemento, referencia, cep) "
+            "VALUES (:id, :endereco, :lat, :lng, :rua, :numero, :bairro, :complemento, :referencia, :cep) "
+            "ON CONFLICT (id) DO NOTHING"), dados)
         criado = r.rowcount == 1
         total = con.execute(text("SELECT COUNT(*) FROM pedidos WHERE status = 'pendente'")).scalar()
     return {"mensagem": "Pedido recebido" if criado else "Pedido já existia (ignorado)", "total_pendentes": total}
@@ -522,20 +548,22 @@ def historico_csv(dias: int = 30):
     inicio_utc = inicio_local - timedelta(hours=TIMEZONE_OFFSET_HORAS)
     with engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, endereco, motoboy_id, criado_em, concluido_em FROM pedidos "
+            "SELECT id, endereco, bairro, complemento, referencia, motoboy_id, criado_em, concluido_em FROM pedidos "
             "WHERE status = 'concluido' AND concluido_em IS NOT NULL ORDER BY concluido_em"))]
 
     saida = io.StringIO()
     saida.write("\ufeff")  # marca de ordem de bytes: sem isso o Excel no Windows pode exibir acentos errados
     escritor = csv.writer(saida, delimiter=";")
-    escritor.writerow(["Pedido", "Endereço", "Motoboy", "Criado em", "Entregue em", "Tempo (min)"])
+    escritor.writerow(["Pedido", "Endereço", "Bairro", "Complemento", "Referência",
+                       "Motoboy", "Criado em", "Entregue em", "Tempo (min)"])
     for p in linhas:
         concluido_t = _parse_ts(p["concluido_em"])
         if concluido_t is None or concluido_t < inicio_utc:
             continue
         criado_t = _parse_ts(p["criado_em"])
         tempo = round((concluido_t - criado_t).total_seconds() / 60, 1) if criado_t is not None else ""
-        escritor.writerow([p["id"], p["endereco"], p["motoboy_id"] or "",
+        escritor.writerow([p["id"], p["endereco"], p["bairro"] or "", p["complemento"] or "",
+                           p["referencia"] or "", p["motoboy_id"] or "",
                             _fmt_local(criado_t), _fmt_local(concluido_t), tempo])
 
     nome_arquivo = f"historico_{agora_local.strftime('%Y-%m-%d')}.csv"
@@ -547,15 +575,24 @@ def historico_csv(dias: int = 30):
 # Painel do restaurante (protegido pela API_KEY digitada na própria página)
 # ---------------------------------------------------------------------
 class Consulta(BaseModel):
+    """Busca de endereço. "endereco" é o texto livre (jeito antigo, ainda aceito).
+    Se "rua" vier preenchida, tenta primeiro a busca por campos separados, que
+    costuma acertar mais, e completa com a busca em texto livre."""
     endereco: str = Field(min_length=3, max_length=300)
+    rua: Optional[str] = Field(default=None, max_length=150)
+    numero: Optional[str] = Field(default=None, max_length=20)
+    cidade: Optional[str] = Field(default=None, max_length=80)
+    estado: Optional[str] = Field(default=None, max_length=40)
+    cep: Optional[str] = Field(default=None, max_length=12)
 
 
 _trava_geo = threading.Lock()
 _ultimo_geo = 0.0
 
 
-def buscar_endereco(consulta):
-    """Endereço em texto -> lista de lat/lng candidatos (Nominatim/OpenStreetMap).
+def buscar_endereco(consulta=None, campos=None):
+    """Endereço -> lista de lat/lng candidatos (Nominatim/OpenStreetMap).
+    consulta: texto livre. campos: dict com street/city/state/postalcode (busca estruturada).
     A regra do serviço gratuito pede no máximo 1 consulta por segundo e um
     User-Agent que identifique o aplicativo; ambos são respeitados aqui."""
     global _ultimo_geo
@@ -565,11 +602,13 @@ def buscar_endereco(consulta):
             time.sleep(espera)
         _ultimo_geo = time.time()
     d = 0.2  # ~22 km em volta do restaurante: só procura nesta região
-    params = urllib.parse.urlencode({
-        "q": consulta, "format": "jsonv2", "limit": 5, "countrycodes": "br",
-        "accept-language": "pt-BR", "bounded": 1,
-        "viewbox": f"{RESTAURANTE['lng'] - d},{RESTAURANTE['lat'] + d},{RESTAURANTE['lng'] + d},{RESTAURANTE['lat'] - d}",
-    })
+    base = {"format": "jsonv2", "limit": 5, "countrycodes": "br", "accept-language": "pt-BR", "bounded": 1,
+            "viewbox": f"{RESTAURANTE['lng'] - d},{RESTAURANTE['lat'] + d},{RESTAURANTE['lng'] + d},{RESTAURANTE['lat'] - d}"}
+    if campos:
+        base.update({k: v for k, v in campos.items() if v})
+    else:
+        base["q"] = consulta
+    params = urllib.parse.urlencode(base)
     req = urllib.request.Request(
         "https://nominatim.openstreetmap.org/search?" + params,
         headers={"User-Agent": "despacho-motoboys/1.0 (painel de restaurante pequeno)"})
@@ -588,7 +627,24 @@ def buscar_endereco(consulta):
 @app.post("/geocodificar", dependencies=[Depends(exigir_chave)])
 def geocodificar(c: Consulta):
     try:
-        return {"resultados": buscar_endereco(c.endereco), "centro": RESTAURANTE}
+        resultados = []
+        if c.rua and c.rua.strip():
+            numero = (c.numero or "").strip()
+            rua = c.rua.strip()
+            if numero and numero.upper() not in ("S/N", "SN"):
+                rua = f"{numero} {rua}"
+            try:
+                resultados = buscar_endereco(campos={
+                    "street": rua, "city": (c.cidade or "").strip(), "state": (c.estado or "").strip(),
+                    "postalcode": (c.cep or "").strip(), "country": "Brasil"})
+            except Exception as e:
+                logging.getLogger("uvicorn.error").warning("Falha na busca por campos: %r", e)
+        # Completa com a busca em texto livre (que inclui o bairro), sem repetir pontos.
+        vistos = {(round(x["lat"], 5), round(x["lng"], 5)) for x in resultados}
+        for x in buscar_endereco(c.endereco):
+            if (round(x["lat"], 5), round(x["lng"], 5)) not in vistos:
+                resultados.append(x)
+        return {"resultados": resultados[:6], "centro": RESTAURANTE}
     except Exception as e:
         logging.getLogger("uvicorn.error").warning("Falha na busca de endereço: %r", e)
         return {"resultados": [], "centro": RESTAURANTE,
@@ -602,7 +658,8 @@ def listar_pedidos():
     vem marcado com "atrasado": true, para o painel destacar."""
     with engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, endereco, status, motoboy_id, ordem, criado_em FROM pedidos WHERE status <> 'concluido' "
+            "SELECT id, endereco, complemento, referencia, status, motoboy_id, ordem, criado_em "
+            "FROM pedidos WHERE status <> 'concluido' "
             "ORDER BY status, motoboy_id, ordem, criado_em"))]
     agora = datetime.utcnow()
     for p in linhas:
@@ -610,6 +667,15 @@ def listar_pedidos():
         p["atrasado"] = bool(p["status"] == "pendente" and criado is not None
                               and (agora - criado).total_seconds() / 60 >= PEDIDO_ATRASO_MIN)
     return {"pedidos": linhas}
+
+
+@app.get("/bairros", dependencies=[Depends(exigir_chave)])
+def listar_bairros():
+    """Bairros já usados em pedidos, para sugerir no painel enquanto digita."""
+    with engine.connect() as con:
+        nomes = [r[0] for r in con.execute(text(
+            "SELECT DISTINCT bairro FROM pedidos WHERE bairro IS NOT NULL AND bairro <> '' ORDER BY bairro"))]
+    return {"bairros": nomes}
 
 
 @app.get("/painel")
@@ -650,6 +716,8 @@ PAINEL_HTML = r"""<!DOCTYPE html>
  .cartoes{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
  .cartao{background:#f5f5f5;border-radius:8px;padding:10px;text-align:center}
  .cartao .num{font-size:1.6rem;font-weight:700} .cartao .rot{font-size:.8rem;color:#555}
+ .sn{display:flex;align-items:center;gap:4px;font-size:.9rem;white-space:nowrap}
+ .extra{font-size:.85rem;color:#555}
 </style>
 </head>
 <body>
@@ -676,10 +744,27 @@ PAINEL_HTML = r"""<!DOCTYPE html>
  <section>
   <h2>1. Novo pedido</h2>
   <div class="linha">
-   <input id="endereco" placeholder="Rua e número (ex.: Rua Tal, 123, Bairro)">
-   <input id="cidade" value="Itabira, MG" size="12">
-   <button id="buscar">Buscar endereço</button>
+   <input id="rua" placeholder="Rua * (ex.: Rua São Paulo)" style="flex:3">
+   <input id="numero" placeholder="Número *" style="flex:1;min-width:90px">
+   <label class="sn"><input type="checkbox" id="semNumero"> Sem número</label>
   </div>
+  <div class="linha">
+   <input id="bairro" list="listaBairros" placeholder="Bairro * (ex.: Amazonas)" autocomplete="off">
+   <datalist id="listaBairros"></datalist>
+   <input id="cep" placeholder="CEP (opcional)" inputmode="numeric" maxlength="9" style="flex:0 1 140px;min-width:120px">
+  </div>
+  <div class="linha">
+   <input id="complemento" placeholder="Complemento (ex.: apto 201, bloco B, casa 2)">
+  </div>
+  <div class="linha">
+   <input id="referencia" placeholder="Ponto de referência (ex.: em frente à padaria)">
+  </div>
+  <div class="linha">
+   <input id="cidade" value="Itabira, MG" style="flex:0 1 160px;min-width:120px" title="Cidade, UF">
+   <button id="buscar">Buscar endereço</button>
+   <button id="limpar" class="cinza">Limpar</button>
+  </div>
+  <div style="font-size:.85rem;color:#555;margin-bottom:6px">* obrigatório. Complemento e referência não entram na busca do mapa; só aparecem para o motoboy.</div>
   <div id="msgBusca"></div>
   <ul id="candidatos"></ul>
   <div id="confirmacao" style="display:none">
@@ -717,7 +802,6 @@ PAINEL_HTML = r"""<!DOCTYPE html>
 let chave = sessionStorage.getItem("chave") || "";
 const $ = (i) => document.getElementById(i);
 $("chave").value = chave;
-let textoDigitado = "";
 
 async function api(caminho, metodo, corpo) {
   const resp = await fetch(caminho, {
@@ -732,16 +816,52 @@ async function api(caminho, metodo, corpo) {
 
 function dizer(el, texto, classe) { el.textContent = texto; el.className = classe || ""; }
 
-$("salvar").onclick = () => { chave = $("chave").value.trim(); sessionStorage.setItem("chave", chave); atualizarTudo(); };
+$("salvar").onclick = () => { chave = $("chave").value.trim(); sessionStorage.setItem("chave", chave); atualizarTudo(); carregarBairros(); };
+
+$("semNumero").onchange = () => {
+  const sn = $("semNumero").checked;
+  $("numero").disabled = sn;
+  if (sn) $("numero").value = "";
+};
+
+$("cep").oninput = () => {
+  const d = $("cep").value.replace(/\D/g, "").slice(0, 8);
+  $("cep").value = d.length > 5 ? d.slice(0, 5) + "-" + d.slice(5) : d;
+};
+
+// Lê os campos do formulário. Devolve {erro: "..."} se faltar algo obrigatório.
+function lerEndereco() {
+  const v = (i) => $(i).value.trim().replace(/\s+/g, " ");
+  const e = {rua: v("rua"), numero: $("semNumero").checked ? "S/N" : v("numero"), bairro: v("bairro"),
+             complemento: v("complemento"), referencia: v("referencia"), cep: v("cep")};
+  const partesCidade = v("cidade").split(",");
+  e.cidade = (partesCidade[0] || "").trim();
+  e.estado = (partesCidade[1] || "").trim();
+  if (e.rua.length < 3) return {erro: "Digite o nome da rua."};
+  if (!e.numero) return {erro: "Digite o número (ou marque \"Sem número\")."};
+  if (e.bairro.length < 2) return {erro: "Digite o bairro."};
+  if (e.cep && e.cep.replace(/\D/g, "").length !== 8) return {erro: "CEP incompleto (8 números). Pode deixar vazio."};
+  // Endereço numa linha, no formato que o Google Maps entende bem. Sem complemento/referência.
+  const cidadeUf = e.cidade + (e.estado ? " - " + e.estado : "");
+  e.endereco = e.rua + (e.numero !== "S/N" ? ", " + e.numero : "") + " - " + e.bairro + ", " + cidadeUf + (e.cep ? ", " + e.cep : "");
+  return e;
+}
+
+function limparFormulario() {
+  ["rua", "numero", "bairro", "complemento", "referencia", "cep"].forEach((i) => $(i).value = "");
+  $("semNumero").checked = false; $("numero").disabled = false;
+}
+$("limpar").onclick = () => { limparFormulario(); $("candidatos").innerHTML = ""; $("confirmacao").style.display = "none"; dizer($("msgBusca"), ""); };
 
 $("buscar").onclick = async () => {
-  const end = $("endereco").value.trim();
-  if (end.length < 3) { dizer($("msgBusca"), "Digite o endereço.", "erro"); return; }
-  textoDigitado = end;
+  const e = lerEndereco();
+  if (e.erro) { dizer($("msgBusca"), e.erro, "erro"); return; }
   $("candidatos").innerHTML = "";
   dizer($("msgBusca"), "Buscando...");
   try {
-    const r = await api("/geocodificar", "POST", {endereco: end + ", " + $("cidade").value.trim()});
+    const r = await api("/geocodificar", "POST", {
+      endereco: e.rua + (e.numero !== "S/N" ? ", " + e.numero : "") + ", " + e.bairro + ", " + e.cidade + (e.estado ? ", " + e.estado : ""),
+      rua: e.rua, numero: e.numero, cidade: e.cidade, estado: e.estado, cep: e.cep || null});
     if (!r.resultados.length) { dizer($("msgBusca"), r.aviso || "Não achei o endereço. Clique no mapa no ponto certo.", "erro"); mostrarConfirmacao(r.centro); return; }
     dizer($("msgBusca"), "Clique no endereço correto:");
     r.resultados.forEach((c) => {
@@ -772,14 +892,18 @@ function mostrarConfirmacao(c) {
 $("cancelar").onclick = () => { $("confirmacao").style.display = "none"; };
 
 $("confirmar").onclick = async () => {
+  // Lê os campos de novo: se a pessoa corrigiu o complemento depois de buscar, vale o corrigido.
+  const e = lerEndereco();
+  if (e.erro) { dizer($("msgBusca"), e.erro, "erro"); return; }
   const ponto = pino.getLatLng();
   $("confirmar").disabled = true;
   const id = "P" + Date.now().toString(36).toUpperCase();
   try {
-    await api("/pedidos", "POST", {id: id, endereco: textoDigitado + ", " + $("cidade").value.trim(), lat: ponto.lat, lng: ponto.lng});
+    await api("/pedidos", "POST", {id: id, endereco: e.endereco, lat: ponto.lat, lng: ponto.lng,
+      rua: e.rua, numero: e.numero, bairro: e.bairro, complemento: e.complemento, referencia: e.referencia, cep: e.cep});
     dizer($("msgBusca"), "Pedido " + id + " criado.", "ok");
-    $("candidatos").innerHTML = ""; $("endereco").value = ""; $("confirmacao").style.display = "none";
-    carregarFila();
+    $("candidatos").innerHTML = ""; limparFormulario(); $("confirmacao").style.display = "none";
+    carregarFila(); carregarBairros();
   } catch (e) { dizer($("msgBusca"), e.message, "erro"); }
   $("confirmar").disabled = false;
 };
@@ -796,6 +920,8 @@ async function carregarFila() {
       if (p.atrasado) { li.className = "atrasado"; atrasados++; }
       const info = document.createElement("div"); info.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap";
       const t = document.createElement("span"); t.textContent = p.id + " - " + p.endereco;
+      const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : ""].filter(Boolean).join(" · ");
+      if (extras) { const x = document.createElement("div"); x.className = "extra"; x.textContent = extras; t.append(x); }
       const s = document.createElement("span"); s.className = "tag" + (p.atrasado ? " atrasado" : "");
       s.textContent = p.atrasado ? "esperando há mais de " + PEDIDO_ATRASO_MIN_TXT
         : p.status === "pendente" ? "aguardando" : p.motoboy_id + " (parada " + p.ordem + ")";
@@ -913,9 +1039,19 @@ $("baixarHistorico").onclick = async () => {
   $("baixarHistorico").disabled = false;
 };
 
+async function carregarBairros() {
+  if (!chave) return;
+  try {
+    const r = await api("/bairros");
+    const dl = $("listaBairros"); dl.innerHTML = "";
+    r.bairros.forEach((b) => { const o = document.createElement("option"); o.value = b; dl.append(o); });
+  } catch (e) { /* sugestão é só uma ajuda; sem ela o campo funciona igual */ }
+}
+
 // carregarMotos primeiro: carregarFila usa a lista de motoboys para o seletor de "Atribuir".
 async function atualizarTudo() { await carregarMotos(); await carregarFila(); await carregarResumo(); }
 atualizarTudo();
+carregarBairros();
 setInterval(atualizarTudo, 10000);
 </script>
 </body>
@@ -934,7 +1070,8 @@ def rota_do_motoboy(motoboy_id: str, x_codigo: str = Header(default="")):
         if m is None or not secrets.compare_digest(x_codigo.encode(), m[0].encode()):
             raise HTTPException(status_code=401, detail="Nome ou código incorretos")
         paradas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, endereco, lat, lng FROM pedidos WHERE motoboy_id = :id AND status = 'despachado' ORDER BY ordem"),
+            "SELECT id, endereco, complemento, referencia, lat, lng FROM pedidos "
+            "WHERE motoboy_id = :id AND status = 'despachado' ORDER BY ordem"),
             {"id": motoboy_id})]
     return {"motoboy_id": motoboy_id, "restaurante": RESTAURANTE, "paradas": paradas,
             "trajeto": trajeto(RESTAURANTE, paradas) if paradas else None}
@@ -1007,6 +1144,7 @@ PAGINA_HTML = r"""<!DOCTYPE html>
  .ent:disabled{opacity:.5}
  .completa{display:inline-block;margin-left:8px;background:#10b981;color:#fff;padding:6px 10px;border-radius:6px;text-decoration:none}
  #paradas a.sec{background:#6b7280}
+ .extra{font-size:.9rem;color:#b45309;font-weight:600;margin-top:3px}
 </style>
 </head>
 <body>
@@ -1085,13 +1223,15 @@ function desenhar(dados) {
     L.marker([p.lat, p.lng], {icon: icone(i + 1)}).addTo(camada);
     const li = document.createElement("li");
     const t = document.createElement("span"); t.textContent = (i + 1) + ". " + p.id + " - " + p.endereco;
+    const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : ""].filter(Boolean);
+    extras.forEach((txt) => { const x = document.createElement("div"); x.className = "extra"; x.textContent = txt; t.append(x); });
     const a = document.createElement("a"); a.textContent = "Navegar"; a.target = "_blank";
     a.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + encodeURIComponent(p.endereco);
     const b = document.createElement("a"); b.textContent = "Pelo ponto"; b.target = "_blank"; b.className = "sec";
     b.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + p.lat + "," + p.lng;
     const e = document.createElement("button"); e.textContent = "Entregue"; e.className = "ent";
     e.onclick = async () => {
-      if (!confirm("Marcar como entregue?\n" + p.endereco)) return;
+      if (!confirm("Marcar como entregue?\n" + p.endereco + (p.complemento ? "\n" + p.complemento : ""))) return;
       e.disabled = true;
       try {
         const resp = await fetch("/rotas/" + encodeURIComponent(id) + "/entregar/" + encodeURIComponent(p.id), {method: "POST", headers: {"X-Codigo": codigo}});
