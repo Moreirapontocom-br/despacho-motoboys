@@ -5,6 +5,11 @@ Variáveis de ambiente (configuradas no painel do Render, nunca dentro do códig
     DATABASE_URL  endereço do banco Postgres. Se não existir, usa um arquivo
                   SQLite local (só para testes no seu computador).
     RESTAURANTE_LAT / RESTAURANTE_LNG / RESTAURANTE_ENDERECO  (opcionais) local do restaurante.
+    LOCATIONIQ_KEY (recomendado para uso comercial) chave da LocationIQ. Com ela, busca de
+                  endereço, rotas pelas ruas e imagens do mapa passam a usar a LocationIQ,
+                  que permite uso comercial no plano gratuito (com o crédito na tela).
+                  Sem ela, o sistema usa os serviços públicos gratuitos (Nominatim, OSRM
+                  e OpenStreetMap), que servem só para testes.
     OSRM_URL      (opcional) serviço de rotas pelas ruas. Padrão: servidor público de demonstração
                   do OSRM (uso não comercial, sem garantia). Use "desligado" para só linha reta.
     API_KEY       chave secreta exigida em /pedidos, /motoboys, /despachar e /status.
@@ -24,6 +29,7 @@ import os
 import secrets
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -298,26 +304,61 @@ def agrupar_pedidos(pedidos, raio_km=2.0, max_por_lote=4):
 # Rotas pelas ruas (OSRM). Se o serviço falhar, tudo continua em linha reta.
 # ---------------------------------------------------------------------
 OSRM_URL = os.environ.get("OSRM_URL", "https://router.project-osrm.org").strip().rstrip("/")
+# Chave da LocationIQ (opcional). Quando existe, rotas, busca de endereço e mapa usam a LocationIQ.
+LOCATIONIQ_KEY = os.environ.get("LOCATIONIQ_KEY", "").strip()
+LOCATIONIQ_URL = "https://us1.locationiq.com/v1"
+# Intervalo mínimo entre consultas: o plano gratuito da LocationIQ aceita 2 por segundo;
+# os serviços públicos pedem no máximo 1 por segundo.
+INTERVALO_CONSULTA_S = 0.6 if LOCATIONIQ_KEY else 1.1
+MAX_PONTOS_MATRIZ = 25 if LOCATIONIQ_KEY else 90  # a matriz da LocationIQ aceita até 25 pontos
+
+# Imagens do mapa. Ao contrário das outras consultas, estas são pedidas pelo navegador,
+# então a chave fica visível na página. Por isso existe LOCATIONIQ_MAPA_KEY: uma segunda
+# chave, travada no painel da LocationIQ para funcionar só no endereço do seu site.
+# Se não existir, usa LOCATIONIQ_KEY mesmo.
+_chave_mapa = os.environ.get("LOCATIONIQ_MAPA_KEY", "").strip() or LOCATIONIQ_KEY
+if _chave_mapa:
+    MAPA_URL = "https://{s}-tiles.locationiq.com/v3/streets/r/{z}/{x}/{y}.png?key=" + urllib.parse.quote(_chave_mapa)
+    MAPA_CREDITO = ('<a href="https://locationiq.com" target="_blank">Search by LocationIQ.com</a> | '
+                    '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>')
+else:
+    MAPA_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    MAPA_CREDITO = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> | rotas: OSRM'
+
+
+def _com_mapa(html):
+    """Coloca o endereço das imagens do mapa e o crédito obrigatório dentro da página."""
+    return html.replace("<script>\n", "<script>\nconst MAPA_URL = " + json.dumps(MAPA_URL)
+                        + ";\nconst MAPA_CREDITO = " + json.dumps(MAPA_CREDITO) + ";\n", 1)
 _trava_osrm = threading.Lock()
 _ultimo_osrm = 0.0
 _osrm_falha_ate = 0.0
 _cache_trajetos = {}
 
 
-def _osrm_get(caminho):
-    """Consulta o serviço de rotas. Devolve o JSON ou None se falhar.
-    Respeita 1 consulta por segundo e, depois de uma falha, não tenta de novo por 60 s."""
+def _osrm_get(tipo, coords, extra):
+    """Consulta o serviço de rotas. tipo: "matriz" ou "rota". Devolve o JSON ou None se falhar.
+    Respeita o limite de consultas por segundo e, depois de uma falha, não tenta de novo por 60 s.
+    A LocationIQ usa o mesmo formato de resposta do OSRM, só muda o endereço."""
     global _ultimo_osrm, _osrm_falha_ate
-    if not OSRM_URL or OSRM_URL.lower() in ("off", "desligado"):
+    if OSRM_URL.lower() in ("off", "desligado"):
+        return None
+    if LOCATIONIQ_KEY:
+        servico = "matrix" if tipo == "matriz" else "directions"
+        url = f"{LOCATIONIQ_URL}/{servico}/driving/{coords}?{extra}&key={urllib.parse.quote(LOCATIONIQ_KEY)}"
+    elif OSRM_URL:
+        servico = "table" if tipo == "matriz" else "route"
+        url = f"{OSRM_URL}/{servico}/v1/driving/{coords}?{extra}"
+    else:
         return None
     if time.time() < _osrm_falha_ate:
         return None
     with _trava_osrm:
-        espera = 1.1 - (time.time() - _ultimo_osrm)
+        espera = INTERVALO_CONSULTA_S - (time.time() - _ultimo_osrm)
         if espera > 0:
             time.sleep(espera)
         _ultimo_osrm = time.time()
-    req = urllib.request.Request(OSRM_URL + caminho,
+    req = urllib.request.Request(url,
                                  headers={"User-Agent": "despacho-motoboys/1.0 (painel de restaurante pequeno)"})
     try:
         with urllib.request.urlopen(req, timeout=6) as resp:
@@ -337,9 +378,9 @@ def _coords(pontos):
 
 def matriz_duracoes(pontos):
     """Tempo de carro (segundos) entre todos os pares de pontos, pelas ruas. None se indisponível."""
-    if len(pontos) < 2 or len(pontos) > 90:
+    if len(pontos) < 2 or len(pontos) > MAX_PONTOS_MATRIZ:
         return None
-    dados = _osrm_get("/table/v1/driving/" + _coords(pontos) + "?annotations=duration")
+    dados = _osrm_get("matriz", _coords(pontos), "annotations=duration")
     matriz = dados.get("durations") if dados else None
     if not matriz or len(matriz) != len(pontos):
         return None
@@ -387,7 +428,7 @@ def trajeto(origem, paradas):
     chave = _coords(pontos)
     if chave in _cache_trajetos:
         return _cache_trajetos[chave]
-    dados = _osrm_get("/route/v1/driving/" + chave + "?overview=simplified&geometries=geojson")
+    dados = _osrm_get("rota", chave, "overview=simplified&geometries=geojson")
     if not dados or not dados.get("routes"):
         return None
     linha = [[round(lat, 5), round(lng, 5)] for lng, lat in dados["routes"][0]["geometry"]["coordinates"]]
@@ -703,32 +744,41 @@ _ultimo_geo = 0.0
 
 
 def buscar_endereco(consulta=None, campos=None):
-    """Endereço -> lista de lat/lng candidatos (Nominatim/OpenStreetMap).
+    """Endereço -> lista de lat/lng candidatos (LocationIQ se houver chave; senão Nominatim/OpenStreetMap).
     consulta: texto livre. campos: dict com street/city/state/postalcode (busca estruturada).
-    A regra do serviço gratuito pede no máximo 1 consulta por segundo e um
-    User-Agent que identifique o aplicativo; ambos são respeitados aqui."""
+    O Nominatim público pede no máximo 1 consulta por segundo e um User-Agent que
+    identifique o aplicativo; ambos são respeitados aqui."""
     global _ultimo_geo
     with _trava_geo:
-        espera = 1.1 - (time.time() - _ultimo_geo)
+        espera = INTERVALO_CONSULTA_S - (time.time() - _ultimo_geo)
         if espera > 0:
             time.sleep(espera)
         _ultimo_geo = time.time()
     d = 0.2  # ~22 km em volta do restaurante: só procura nesta região
-    base = {"format": "jsonv2", "limit": 5, "countrycodes": "br", "accept-language": "pt-BR", "bounded": 1,
+    base = {"format": "json", "limit": 5, "countrycodes": "br", "accept-language": "pt-BR", "bounded": 1,
             "viewbox": f"{RESTAURANTE['lng'] - d},{RESTAURANTE['lat'] + d},{RESTAURANTE['lng'] + d},{RESTAURANTE['lat'] - d}"}
     if campos:
         base.update({k: v for k, v in campos.items() if v})
     else:
         base["q"] = consulta
-    params = urllib.parse.urlencode(base)
-    req = urllib.request.Request(
-        "https://nominatim.openstreetmap.org/search?" + params,
-        headers={"User-Agent": "despacho-motoboys/1.0 (painel de restaurante pequeno)"})
+    if LOCATIONIQ_KEY:
+        base["key"] = LOCATIONIQ_KEY
+        url = LOCATIONIQ_URL + ("/search/structured?" if campos else "/search?")
+    else:
+        url = "https://nominatim.openstreetmap.org/search?"
+    req = urllib.request.Request(url + urllib.parse.urlencode(base),
+                                 headers={"User-Agent": "despacho-motoboys/1.0 (painel de restaurante pequeno)"})
     for tentativa in (1, 2):
         try:
             with urllib.request.urlopen(req, timeout=8) as resp:
                 dados = json.load(resp)
             break
+        except urllib.error.HTTPError as e:
+            if e.code == 404:  # a LocationIQ responde 404 quando não encontra nada
+                return []
+            if tentativa == 2:
+                raise
+            time.sleep(2)
         except Exception:
             if tentativa == 2:
                 raise
@@ -1041,7 +1091,7 @@ function mostrarConfirmacao(c) {
   $("confirmacao").style.display = "block";
   if (!mapaC) {
     mapaC = L.map("mapaConfirma");
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom: 19, attribution: "&copy; OpenStreetMap"}).addTo(mapaC);
+    L.tileLayer(MAPA_URL, {maxZoom: 19, subdomains: "abc", attribution: MAPA_CREDITO}).addTo(mapaC);
     pino = L.marker([c.lat, c.lng], {draggable: true, icon: L.divIcon({className: "", html: '<div class="pino"></div>', iconSize: [22, 22]})}).addTo(mapaC);
     mapaC.on("click", (e) => pino.setLatLng(e.latlng));
   }
@@ -1244,7 +1294,7 @@ setInterval(atualizarTudo, 10000);
 </body>
 </html>
 """
-PAINEL_HTML = PAINEL_HTML.replace("__PEDIDO_ATRASO_MIN__", str(int(PEDIDO_ATRASO_MIN)))
+PAINEL_HTML = _com_mapa(PAINEL_HTML.replace("__PEDIDO_ATRASO_MIN__", str(int(PEDIDO_ATRASO_MIN))))
 
 
 # ---------------------------------------------------------------------
@@ -1349,7 +1399,7 @@ const cod = document.getElementById("codigo"); cod.value = codigo;
 document.getElementById("ir").onclick = () => { location.search = "?id=" + encodeURIComponent(nome.value.trim()) + "&codigo=" + encodeURIComponent(cod.value.trim()); };
 
 const mapa = L.map("mapa").setView([-19.6156, -43.2258], 14);
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom: 19, attribution: "&copy; OpenStreetMap | rotas: OSRM"}).addTo(mapa);
+L.tileLayer(MAPA_URL, {maxZoom: 19, subdomains: "abc", attribution: MAPA_CREDITO}).addTo(mapa);
 const camada = L.layerGroup().addTo(mapa);
 let ultimo = "";
 let modo = "rest";
@@ -1457,3 +1507,4 @@ atualizar(); setInterval(atualizar, 5000);
 </body>
 </html>
 """
+PAGINA_HTML = _com_mapa(PAGINA_HTML)
