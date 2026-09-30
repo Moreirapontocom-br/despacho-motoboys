@@ -55,6 +55,8 @@ def _coord(nome, padrao):
 # RESTAURANTE_ENDERECO (opcional): endereço em texto, usado como ponto de partida no Google Maps.
 RESTAURANTE = {"lat": _coord("RESTAURANTE_LAT", -19.6156), "lng": _coord("RESTAURANTE_LNG", -43.2258),
                "endereco": os.environ.get("RESTAURANTE_ENDERECO", "").strip()}
+# RESTAURANTE_NOME (opcional): aparece na mensagem de WhatsApp enviada ao cliente.
+RESTAURANTE_NOME = os.environ.get("RESTAURANTE_NOME", "").strip()
 API_KEY = os.environ.get("API_KEY", "")
 
 # Por quantos minutos a posição de GPS de um motoboy é considerada atual para o despacho.
@@ -156,7 +158,9 @@ with engine.begin() as con:
 # Migração da tabela de pedidos. As colunas de endereço separado (rua, número,
 # bairro...) são opcionais: pedidos antigos ficam só com "endereco" e continuam funcionando.
 CAMPOS_ENDERECO = ("rua", "numero", "bairro", "complemento", "referencia", "cep")
-for _coluna in (["concluido_em TIMESTAMP", "telefone TEXT", "cancelado_em TIMESTAMP", "despachado_em TIMESTAMP"]
+# "num" é o número do pedido no dia (#1, #2, ...), fácil de falar no balcão e no telefone.
+for _coluna in (["concluido_em TIMESTAMP", "telefone TEXT", "cancelado_em TIMESTAMP", "despachado_em TIMESTAMP",
+                 "num INTEGER"]
                 + [f"{c} TEXT" for c in CAMPOS_ENDERECO]):
     try:
         with engine.begin() as con:
@@ -661,6 +665,21 @@ def _gravar_viagens(con, motoboy_id, viagens, saiu, abertas):
 # ---------------------------------------------------------------------
 # Endpoints protegidos pela chave (usados pelo restaurante/conectores)
 # ---------------------------------------------------------------------
+_trava_numero = threading.Lock()
+
+
+def _inicio_do_dia_utc():
+    """Meia-noite de hoje no fuso do restaurante, convertida para UTC (como o banco guarda)."""
+    agora_local = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET_HORAS)
+    inicio_local = agora_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return inicio_local - timedelta(hours=TIMEZONE_OFFSET_HORAS)
+
+
+def _rotulo(num, pedido_id):
+    """Como o pedido aparece para as pessoas: "#12". Pedidos antigos, sem número, usam o id."""
+    return f"#{num}" if num else pedido_id
+
+
 @app.post("/pedidos", dependencies=[Depends(exigir_chave)])
 def criar_pedido(pedido: Pedido):
     """Registra um pedido novo.
@@ -669,11 +688,14 @@ def criar_pedido(pedido: Pedido):
       o mesmo id e o segundo pedido era descartado sem aviso.
     - Com id: se ele já existir, o pedido é ignorado (evita duplicar em reenvios)."""
     sql = text(
-        "INSERT INTO pedidos (id, endereco, lat, lng, rua, numero, bairro, complemento, referencia, cep, telefone) "
-        "VALUES (:id, :endereco, :lat, :lng, :rua, :numero, :bairro, :complemento, :referencia, :cep, :telefone) "
+        "INSERT INTO pedidos (id, num, endereco, lat, lng, rua, numero, bairro, complemento, referencia, cep, telefone) "
+        "VALUES (:id, :num, :endereco, :lat, :lng, :rua, :numero, :bairro, :complemento, :referencia, :cep, :telefone) "
         "ON CONFLICT (id) DO NOTHING")
-    with engine.begin() as con:
+    # A trava garante que dois pedidos criados no mesmo instante não recebam o mesmo número do dia.
+    with _trava_numero, engine.begin() as con:
         dados = _limpar_dados(con, pedido.model_dump())
+        dados["num"] = (con.execute(text("SELECT COALESCE(MAX(num), 0) FROM pedidos WHERE criado_em >= :inicio"),
+                                    {"inicio": _inicio_do_dia_utc()}).scalar() or 0) + 1
         if dados["id"]:
             criado = con.execute(sql, dados).rowcount == 1
         else:
@@ -685,9 +707,12 @@ def criar_pedido(pedido: Pedido):
                     break
             if not criado:
                 raise HTTPException(status_code=503, detail="Não consegui gerar um número para o pedido. Tente de novo.")
+        if not criado:  # já existia: devolve o número que ele recebeu quando foi criado
+            dados["num"] = con.execute(text("SELECT num FROM pedidos WHERE id = :id"), {"id": dados["id"]}).scalar()
         total = con.execute(text("SELECT COUNT(*) FROM pedidos WHERE status = 'pendente'")).scalar()
     return {"mensagem": "Pedido recebido" if criado else "Pedido já existia (ignorado)",
-            "id": dados["id"], "criado": criado, "total_pendentes": total}
+            "id": dados["id"], "num": dados["num"], "rotulo": _rotulo(dados["num"], dados["id"]),
+            "criado": criado, "total_pendentes": total}
 
 
 @app.put("/pedidos/{pedido_id}", dependencies=[Depends(exigir_chave)])
@@ -715,18 +740,22 @@ def editar_pedido(pedido_id: str, pedido: DadosPedido):
 @app.post("/pedidos/{pedido_id}/cancelar", dependencies=[Depends(exigir_chave)])
 def cancelar_pedido(pedido_id: str):
     """Cancela um pedido na fila ou já em rota. Em rota, ele some da tela do motoboy
-    na próxima atualização (5 s). O pedido fica guardado no banco como 'cancelado'."""
+    na próxima atualização (5 s) e aparece um aviso de cancelamento para ele.
+    O pedido fica guardado no banco como 'cancelado'."""
     if not _trava_despacho.acquire(timeout=15):
         raise HTTPException(status_code=503, detail="Já existe um despacho em andamento. Tente de novo em alguns segundos.")
     try:
         with engine.begin() as con:
-            atual = con.execute(text("SELECT status, motoboy_id FROM pedidos WHERE id = :id"), {"id": pedido_id}).first()
+            atual = con.execute(text("SELECT status, motoboy_id, num FROM pedidos WHERE id = :id"), {"id": pedido_id}).first()
             if atual is None or atual[0] not in ("pendente", "despachado"):
                 raise HTTPException(status_code=409, detail="Esse pedido não pode mais ser cancelado (já foi entregue ou cancelado).")
-            con.execute(text("UPDATE pedidos SET status = 'cancelado', cancelado_em = CURRENT_TIMESTAMP WHERE id = :id"),
+            # Pedido que estava só na fila não tem motoboy: garante motoboy_id vazio para não gerar aviso.
+            con.execute(text("UPDATE pedidos SET status = 'cancelado', cancelado_em = CURRENT_TIMESTAMP, "
+                             "motoboy_id = CASE WHEN status = 'despachado' THEN motoboy_id END WHERE id = :id"),
                         {"id": pedido_id})
-        aviso = f" Avise {atual[1]}: a parada já saiu da rota dele." if atual[0] == "despachado" else ""
-        return {"mensagem": f"Pedido {pedido_id} cancelado.{aviso}"}
+        aviso = (f" {atual[1]} vai ver um aviso de cancelamento na tela dele. Se ele já estiver com a comida, "
+                 "vale ligar também." if atual[0] == "despachado" else "")
+        return {"mensagem": f"Pedido {_rotulo(atual[2], pedido_id)} cancelado.{aviso}"}
     finally:
         _trava_despacho.release()
 
@@ -807,7 +836,7 @@ def despachar():
     try:
         with engine.begin() as con:
             pedidos = [dict(r._mapping) for r in con.execute(text(
-                "SELECT id, endereco, lat, lng FROM pedidos WHERE status = 'pendente' ORDER BY criado_em, id"))]
+                "SELECT id, num, endereco, lat, lng FROM pedidos WHERE status = 'pendente' ORDER BY criado_em, id"))]
             if not pedidos:
                 return {"mensagem": "Não há pedidos pendentes para despachar."}
             estados, abertas = _estados(con)
@@ -917,13 +946,13 @@ def historico_csv(dias: int = 30):
     inicio_utc = inicio_local - timedelta(hours=TIMEZONE_OFFSET_HORAS)
     with engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, endereco, bairro, complemento, referencia, telefone, motoboy_id, criado_em, concluido_em FROM pedidos "
+            "SELECT id, num, endereco, bairro, complemento, referencia, telefone, motoboy_id, criado_em, concluido_em FROM pedidos "
             "WHERE status = 'concluido' AND concluido_em IS NOT NULL ORDER BY concluido_em"))]
 
     saida = io.StringIO()
     saida.write("\ufeff")  # marca de ordem de bytes: sem isso o Excel no Windows pode exibir acentos errados
     escritor = csv.writer(saida, delimiter=";")
-    escritor.writerow(["Pedido", "Endereço", "Bairro", "Complemento", "Referência", "Telefone",
+    escritor.writerow(["Pedido", "Nº do dia", "Endereço", "Bairro", "Complemento", "Referência", "Telefone",
                        "Motoboy", "Criado em", "Entregue em", "Tempo (min)"])
     for p in linhas:
         concluido_t = _parse_ts(p["concluido_em"])
@@ -931,7 +960,7 @@ def historico_csv(dias: int = 30):
             continue
         criado_t = _parse_ts(p["criado_em"])
         tempo = round((concluido_t - criado_t).total_seconds() / 60, 1) if criado_t is not None else ""
-        escritor.writerow([p["id"], p["endereco"], p["bairro"] or "", p["complemento"] or "",
+        escritor.writerow([p["id"], p["num"] or "", p["endereco"], p["bairro"] or "", p["complemento"] or "",
                            p["referencia"] or "", p["telefone"] or "", p["motoboy_id"] or "",
                             _fmt_local(criado_t), _fmt_local(concluido_t), tempo])
 
@@ -1038,11 +1067,12 @@ def listar_pedidos():
     "minutos" diz há quanto tempo está na situação atual (na fila ou em rota)."""
     with engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, endereco, rua, numero, bairro, complemento, referencia, cep, telefone, lat, lng, "
+            "SELECT id, num, endereco, rua, numero, bairro, complemento, referencia, cep, telefone, lat, lng, "
             "status, motoboy_id, ordem, criado_em, despachado_em FROM pedidos WHERE status IN ('pendente', 'despachado') "
             "ORDER BY status, motoboy_id, ordem, criado_em"))]
     agora = datetime.utcnow()
     for p in linhas:
+        p["rotulo"] = _rotulo(p["num"], p["id"])
         criado = _parse_ts(p.pop("criado_em"))
         despachado = _parse_ts(p.pop("despachado_em"))
         if p["status"] == "pendente":
@@ -1052,7 +1082,7 @@ def listar_pedidos():
         minutos = (agora - desde).total_seconds() / 60 if desde is not None else None
         p["minutos"] = int(minutos) if minutos is not None else None
         p["atrasado"] = bool(minutos is not None and minutos >= limite)
-    return {"pedidos": linhas}
+    return {"pedidos": linhas, "restaurante_nome": RESTAURANTE_NOME}
 
 
 @app.get("/bairros", dependencies=[Depends(exigir_chave)])
@@ -1106,6 +1136,7 @@ PAINEL_HTML = r"""<!DOCTYPE html>
  .extra{font-size:.85rem;color:#555}
  .aviso-edicao{background:#fef3c7;color:#92400e;padding:8px;border-radius:6px;margin-bottom:8px;font-weight:600}
  button.perigo{background:#b91c1c}
+ a.zap{padding:8px 14px;border-radius:6px;background:#16a34a;color:#fff;text-decoration:none;font-size:1rem}
  .acoes{display:flex;gap:6px;flex-wrap:wrap}
 </style>
 </head>
@@ -1255,7 +1286,7 @@ function lerEndereco() {
   return e;
 }
 
-let editandoId = null;  // id do pedido sendo corrigido, ou null quando é pedido novo
+let editandoId = null, editandoRotulo = "";  // id do pedido sendo corrigido, ou null quando é pedido novo
 
 function limparFormulario() {
   ["rua", "numero", "bairro", "complemento", "referencia", "cep", "telefone"].forEach((i) => $(i).value = "");
@@ -1270,7 +1301,7 @@ function limparFormulario() {
 // se só mudou o complemento ou o telefone, basta clicar em "Salvar alterações".
 function editarPedido(p) {
   limparFormulario();
-  editandoId = p.id;
+  editandoId = p.id; editandoRotulo = p.rotulo || p.id;
   $("rua").value = p.rua || p.endereco;  // pedidos antigos só têm o endereço numa linha
   if (p.numero === "S/N") { $("semNumero").checked = true; $("numero").disabled = true; }
   else $("numero").value = p.numero || "";
@@ -1279,8 +1310,8 @@ function editarPedido(p) {
   $("referencia").value = p.referencia || "";
   $("cep").value = p.cep || "";
   $("telefone").value = p.telefone || "";
-  $("tituloPedido").textContent = "1. Corrigindo pedido " + p.id;
-  $("avisoEdicao").textContent = "Corrigindo o pedido " + p.id + ". Mudou a rua ou o número? Clique em Buscar endereço. Senão, confira o pino e clique em Salvar alterações.";
+  $("tituloPedido").textContent = "1. Corrigindo pedido " + editandoRotulo;
+  $("avisoEdicao").textContent = "Corrigindo o pedido " + editandoRotulo + ". Mudou a rua ou o número? Clique em Buscar endereço. Senão, confira o pino e clique em Salvar alterações.";
   $("avisoEdicao").style.display = "block";
   $("confirmar").textContent = "Salvar alterações";
   $("candidatos").innerHTML = ""; dizer($("msgBusca"), "");
@@ -1338,11 +1369,11 @@ $("confirmar").onclick = async () => {
   try {
     if (editandoId) {
       await api("/pedidos/" + encodeURIComponent(editandoId), "PUT", corpo);
-      dizer($("msgBusca"), "Pedido " + editandoId + " corrigido.", "ok");
+      dizer($("msgBusca"), "Pedido " + editandoRotulo + " corrigido.", "ok");
     } else {
       // O número do pedido é gerado pelo servidor (garante que não se repete).
       const r = await api("/pedidos", "POST", corpo);
-      dizer($("msgBusca"), "Pedido " + r.id + " criado.", "ok");
+      dizer($("msgBusca"), "Pedido " + (r.rotulo || r.id) + " criado.", "ok");
     }
     $("candidatos").innerHTML = ""; limparFormulario(); $("confirmacao").style.display = "none";
     carregarFila(); carregarBairros();
@@ -1353,7 +1384,7 @@ $("confirmar").onclick = async () => {
 // A atualização automática (a cada 10 s) só redesenha a fila se algo mudou, e
 // espera enquanto alguém está com o seletor de motoboy aberto. Antes, ela
 // reconstruía tudo e apagava a escolha feita no "Atribuir" antes do clique.
-let ultimaFila = "";
+let ultimaFila = "", restauranteNome = "";
 const escolhas = {};  // pedido -> motoboy escolhido no seletor (sobrevive às atualizações)
 async function carregarFila(automatico) {
   if (!chave) return;
@@ -1364,6 +1395,7 @@ async function carregarFila(automatico) {
     const assinatura = JSON.stringify([r.pedidos, listaMotoboys.map((m) => m.id)]);
     if (automatico && assinatura === ultimaFila) return;
     ultimaFila = assinatura;
+    restauranteNome = r.restaurante_nome || "";
     const ul = $("fila"); ul.innerHTML = "";
     if (!r.pedidos.length) { const li = document.createElement("li"); li.textContent = "Nenhum pedido na fila."; ul.append(li); }
     let atrasadosFila = 0, atrasadosRota = 0;
@@ -1371,7 +1403,7 @@ async function carregarFila(automatico) {
       const li = document.createElement("li");
       if (p.atrasado) { li.className = "atrasado"; if (p.status === "pendente") atrasadosFila++; else atrasadosRota++; }
       const info = document.createElement("div"); info.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap";
-      const t = document.createElement("span"); t.textContent = p.id + " - " + p.endereco;
+      const t = document.createElement("span"); t.textContent = p.rotulo + " - " + p.endereco;
       const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : "", p.telefone ? "Tel.: " + p.telefone : ""].filter(Boolean).join(" · ");
       if (extras) { const x = document.createElement("div"); x.className = "extra"; x.textContent = extras; t.append(x); }
       const s = document.createElement("span"); s.className = "tag" + (p.atrasado ? " atrasado" : "");
@@ -1390,7 +1422,7 @@ async function carregarFila(automatico) {
       const cx = document.createElement("button"); cx.textContent = "Cancelar pedido"; cx.className = "perigo";
       cx.onclick = async () => {
         const emRota = p.status === "despachado";
-        if (!confirm("Cancelar o pedido " + p.id + "?\n" + p.endereco + (emRota ? "\n\nEle já está com " + p.motoboy_id + ": a parada sai da rota dele." : ""))) return;
+        if (!confirm("Cancelar o pedido " + p.rotulo + "?\n" + p.endereco + (emRota ? "\n\nEle já está com " + p.motoboy_id + ": a parada sai da rota dele." : ""))) return;
         cx.disabled = true;
         try {
           const r2 = await api("/pedidos/" + encodeURIComponent(p.id) + "/cancelar", "POST");
@@ -1409,11 +1441,22 @@ async function carregarFila(automatico) {
           bt.disabled = true;
           try {
             const r2 = await api("/pedidos/" + encodeURIComponent(p.id) + "/atribuir", "POST", {motoboy_id: sel.value});
-            dizer($("msgDespacho"), p.id + " → " + sel.value + ". " + r2.mensagem, "ok"); carregarFila();
+            dizer($("msgDespacho"), p.rotulo + " → " + sel.value + ". " + r2.mensagem, "ok"); carregarFila();
           }
           catch (e) { dizer($("msgDespacho"), e.message, "erro"); bt.disabled = false; }
         };
         acoes.append(sel, bt);
+      }
+      // WhatsApp para o cliente: pedido em rota com telefone. Abre a conversa com a mensagem pronta;
+      // quem está no painel só confere e aperta enviar.
+      const digitos = (p.telefone || "").replace(/\D/g, "");
+      if (p.status === "despachado" && digitos.length >= 10) {
+        const w = document.createElement("a"); w.textContent = "WhatsApp"; w.className = "zap";
+        w.target = "_blank"; w.rel = "noopener";
+        const texto = (restauranteNome ? restauranteNome + " informa: " : "Olá! ") +
+          "seu pedido " + p.rotulo + " saiu para entrega com " + p.motoboy_id + " e deve chegar em breve.";
+        w.href = "https://wa.me/55" + digitos + "?text=" + encodeURIComponent(texto);
+        acoes.append(w);
       }
       acoes.append(cx);
       li.append(acoes);
@@ -1558,10 +1601,21 @@ def rota_do_motoboy(motoboy_id: str, request: Request, x_codigo: str = Header(de
     with engine.connect() as con:
         conferir_codigo(con, request, motoboy_id, x_codigo)
         paradas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, endereco, complemento, referencia, telefone, lat, lng FROM pedidos "
+            "SELECT id, num, endereco, complemento, referencia, telefone, lat, lng FROM pedidos "
             "WHERE motoboy_id = :id AND status = 'despachado' ORDER BY ordem"),
             {"id": motoboy_id})]
-    return {"motoboy_id": motoboy_id, "restaurante": RESTAURANTE, "paradas": paradas,
+        # Pedidos dele cancelados na última hora, para a página mostrar um aviso
+        # (senão a parada só sumiria da lista e ele poderia nem perceber).
+        recentes = con.execute(text(
+            "SELECT id, num, endereco, complemento, cancelado_em FROM pedidos "
+            "WHERE motoboy_id = :id AND status = 'cancelado' AND cancelado_em IS NOT NULL "
+            "ORDER BY cancelado_em DESC LIMIT 20"), {"id": motoboy_id}).all()
+    limite = datetime.utcnow() - timedelta(hours=1)
+    cancelados = [{"id": c.id, "rotulo": _rotulo(c.num, c.id), "endereco": c.endereco, "complemento": c.complemento}
+                  for c in recentes if (_parse_ts(c.cancelado_em) or limite) > limite]
+    for p in paradas:
+        p["rotulo"] = _rotulo(p["num"], p["id"])
+    return {"motoboy_id": motoboy_id, "restaurante": RESTAURANTE, "paradas": paradas, "cancelados": cancelados,
             "trajeto": trajeto(RESTAURANTE, paradas) if paradas else None}
 
 
@@ -1631,6 +1685,8 @@ PAGINA_HTML = r"""<!DOCTYPE html>
  #paradas a.sec{background:#6b7280}
  .extra{font-size:.9rem;color:#b45309;font-weight:600;margin-top:3px}
  #paradas a.ligar{background:#059669}
+ .cancelado{background:#b91c1c;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;font-weight:600}
+ .cancelado button{background:#fff;color:#b91c1c;border:0;border-radius:6px;padding:8px 12px;font-size:1rem;font-weight:700;flex-shrink:0}
 </style>
 </head>
 <body>
@@ -1640,6 +1696,7 @@ PAGINA_HTML = r"""<!DOCTYPE html>
  <input id="codigo" type="password" size="8" placeholder="código">
  <button id="ir">Ver rota</button>
 </header>
+<div id="cancelados"></div>
 <div id="modo">Saindo de: <select id="sel"><option value="rest">do restaurante</option><option value="rua">da minha posição</option></select></div>
 <div id="mapa"></div>
 <div id="msg"></div>
@@ -1705,7 +1762,33 @@ function icone(texto, classe) {
   return L.divIcon({className: "", html: '<div class="num ' + (classe || "") + '">' + texto + "</div>", iconSize: [26, 26]});
 }
 
+// Aviso de pedido cancelado: fica na tela até o motoboy tocar em "Entendi".
+// Os já vistos ficam guardados no celular para o aviso não voltar.
+const chaveVistos = "cancelVistos:" + id;
+let vistos = new Set();
+try { vistos = new Set(JSON.parse(localStorage.getItem(chaveVistos) || "[]")); } catch (e) {}
+const jaVibrou = new Set();
+function mostrarCancelados(lista) {
+  const caixa = document.getElementById("cancelados");
+  caixa.innerHTML = "";
+  (lista || []).filter((c) => !vistos.has(c.id)).forEach((c) => {
+    const d = document.createElement("div"); d.className = "cancelado";
+    const t = document.createElement("span");
+    t.textContent = "PEDIDO " + c.rotulo + " CANCELADO — " + c.endereco + (c.complemento ? " (" + c.complemento + ")" : "") +
+      ". Não entregue. Se já estiver com a comida, fale com o restaurante.";
+    const b = document.createElement("button"); b.textContent = "Entendi";
+    b.onclick = () => {
+      vistos.add(c.id);
+      try { localStorage.setItem(chaveVistos, JSON.stringify([...vistos].slice(-50))); } catch (e) {}
+      d.remove();
+    };
+    d.append(t, b); caixa.append(d);
+    if (!jaVibrou.has(c.id)) { jaVibrou.add(c.id); try { navigator.vibrate && navigator.vibrate([400, 200, 400]); } catch (e) {} }
+  });
+}
+
 function desenhar(dados) {
+  mostrarCancelados(dados.cancelados);
   const msg = document.getElementById("msg");
   const lista = document.getElementById("paradas");
   camada.clearLayers(); lista.innerHTML = "";
@@ -1725,7 +1808,7 @@ function desenhar(dados) {
     pontos.push([p.lat, p.lng]);
     L.marker([p.lat, p.lng], {icon: icone(i + 1)}).addTo(camada);
     const li = document.createElement("li");
-    const t = document.createElement("span"); t.textContent = (i + 1) + ". " + p.id + " - " + p.endereco;
+    const t = document.createElement("span"); t.textContent = (i + 1) + ". " + (p.rotulo || p.id) + " - " + p.endereco;
     const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : ""].filter(Boolean);
     extras.forEach((txt) => { const x = document.createElement("div"); x.className = "extra"; x.textContent = txt; t.append(x); });
     const a = document.createElement("a"); a.textContent = "Navegar"; a.target = "_blank";
