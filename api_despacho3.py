@@ -69,6 +69,17 @@ TIMEZONE_OFFSET_HORAS = _coord("TIMEZONE_OFFSET_HORAS", -3)
 # Depois de quantos minutos pendente (sem despachar) um pedido é marcado como atrasado no painel.
 PEDIDO_ATRASO_MIN = _coord("PEDIDO_ATRASO_MIN", 15)
 
+# Depois de quantos minutos em rota (desde o despacho) um pedido ainda não entregue é marcado como atrasado.
+ROTA_ATRASO_MIN = _coord("ROTA_ATRASO_MIN", 40)
+
+# Estimativas usadas para escolher o motoboy no despacho:
+# PARADA_MIN   minutos gastos em cada entrega (estacionar, subir, receber).
+# SAIDA_MIN    sem GPS, depois de quantos minutos do despacho consideramos que o motoboy já saiu do restaurante.
+# MAX_PARADAS_VIAGEM  máximo de entregas numa mesma saída do restaurante.
+PARADA_MIN = _coord("PARADA_MIN", 3)
+SAIDA_MIN = _coord("SAIDA_MIN", 5)
+MAX_PARADAS_VIAGEM = int(_coord("MAX_PARADAS_VIAGEM", 5))
+
 
 def _parse_ts(v):
     """Converte um horário vindo do banco (datetime já pronto, ou texto no caso do
@@ -145,7 +156,8 @@ with engine.begin() as con:
 # Migração da tabela de pedidos. As colunas de endereço separado (rua, número,
 # bairro...) são opcionais: pedidos antigos ficam só com "endereco" e continuam funcionando.
 CAMPOS_ENDERECO = ("rua", "numero", "bairro", "complemento", "referencia", "cep")
-for _coluna in ["concluido_em TIMESTAMP", "telefone TEXT", "cancelado_em TIMESTAMP"] + [f"{c} TEXT" for c in CAMPOS_ENDERECO]:
+for _coluna in (["concluido_em TIMESTAMP", "telefone TEXT", "cancelado_em TIMESTAMP", "despachado_em TIMESTAMP"]
+                + [f"{c} TEXT" for c in CAMPOS_ENDERECO]):
     try:
         with engine.begin() as con:
             con.execute(text(f"ALTER TABLE pedidos ADD COLUMN {_coluna}"))
@@ -467,13 +479,15 @@ def _custo_reta(a, b):
     return haversine(a["lat"], a["lng"], b["lat"], b["lng"]) * 120
 
 
-def ordenar_rota(origem, pedidos):
+def ordenar_rota(origem, pedidos, usar_ruas=True):
     """Melhor ordem das paradas saindo do restaurante (menor tempo total).
-    Até 7 paradas testa todas as ordens; acima disso usa o vizinho mais próximo."""
+    Até 7 paradas testa todas as ordens; acima disso usa o vizinho mais próximo.
+    usar_ruas=False usa só a linha reta (rápido, sem consultar serviço externo),
+    para as estimativas feitas na escolha do motoboy."""
     if len(pedidos) <= 1:
         return pedidos.copy()
     pontos = [origem] + pedidos
-    mat = matriz_duracoes(pontos)
+    mat = matriz_duracoes(pontos) if usar_ruas else None
 
     def custo(i, j):
         if mat is not None and mat[i][j] is not None:
@@ -513,15 +527,135 @@ def trajeto(origem, paradas):
     return linha
 
 
-def atribuir_motoboys(lotes, motoboys, carga_inicial=None):
-    carga = {m["id"]: (carga_inicial or {}).get(m["id"], 0) for m in motoboys}
-    atribuicoes = {m["id"]: [] for m in motoboys}
+# ---------------------------------------------------------------------
+# Escolha do motoboy
+#
+# Todo motoboy precisa passar no restaurante para pegar a comida. Então o que
+# importa não é quem está mais perto do cliente, e sim quem consegue terminar
+# a entrega mais cedo: tempo até voltar ao restaurante (terminando as paradas
+# que ainda tem) + tempo da nova viagem.
+#
+# Um motoboy que recebeu pedidos mas ainda não saiu do restaurante pode levar
+# os novos na mesma viagem; nesse caso a rota inteira é reorganizada. Se ele
+# já saiu, os novos ficam para depois que ele voltar (ficam no fim da lista).
+# As estimativas usam linha reta (~30 km/h) para ser rápido; a ordem final
+# das paradas continua usando as ruas de verdade.
+# ---------------------------------------------------------------------
+def tempo_viagem(paradas, origem=None, ordenar=True):
+    """Segundos para sair de 'origem' (padrão: restaurante), fazer as entregas e voltar ao restaurante."""
+    if not paradas:
+        return _custo_reta(origem, RESTAURANTE) if origem else 0
+    origem = origem or RESTAURANTE
+    rota = ordenar_rota(origem, list(paradas), usar_ruas=False) if ordenar else list(paradas)
+    pontos = [origem] + rota + [RESTAURANTE]
+    return sum(_custo_reta(pontos[i], pontos[i + 1]) for i in range(len(pontos) - 1)) + len(rota) * PARADA_MIN * 60
+
+
+def estado_motoboy(m, abertas, ultima_entrega, agora=None):
+    """Situação de um motoboy para o despacho.
+    m: dict com lat/lng do cadastro e gps_lat/gps_lng/gps_em.
+    abertas: paradas ainda não entregues (em ordem), cada uma com lat, lng, despachado_em.
+    ultima_entrega: horário da última entrega concluída por ele (ou None).
+    Devolve {"saiu": bool, "volta_s": segundos até estar livre no restaurante,
+             "proxima": paradas que ainda podem ser juntadas na mesma viagem}."""
+    agora = agora or datetime.utcnow()
+    gps = _gps_recente(m.get("gps_em")) and m.get("gps_lat") is not None
+    pos = {"lat": m["gps_lat"], "lng": m["gps_lng"]} if gps else None
+    longe = pos is not None and haversine(pos["lat"], pos["lng"], RESTAURANTE["lat"], RESTAURANTE["lng"]) > 0.3
+
+    if not abertas:
+        return {"saiu": longe, "volta_s": _custo_reta(pos, RESTAURANTE) if longe else 0, "proxima": []}
+
+    horarios = [_parse_ts(p.get("despachado_em")) for p in abertas]
+    desde = None if any(h is None for h in horarios) else min(horarios)
+    ultima = _parse_ts(ultima_entrega)
+    if gps and not longe:
+        # GPS diz que ele está no restaurante. Só conta como "já saiu" se já entregou algo desta viagem.
+        saiu = desde is None or (ultima is not None and ultima >= desde)
+    else:
+        saiu = (longe or desde is None or (ultima is not None and ultima >= desde)
+                or (agora - desde).total_seconds() >= SAIDA_MIN * 60)
+
+    if not saiu:
+        return {"saiu": False, "volta_s": 0, "proxima": list(abertas)}
+    if longe:
+        volta = tempo_viagem(abertas, origem=pos, ordenar=False)
+    else:
+        decorrido = (agora - desde).total_seconds() if desde else float("inf")
+        volta = max(tempo_viagem(abertas, ordenar=False) - decorrido, len(abertas) * PARADA_MIN * 60)
+    return {"saiu": True, "volta_s": volta, "proxima": []}
+
+
+def planejar(lotes, estados):
+    """Distribui os lotes de pedidos novos. estados: {motoboy_id: estado_motoboy(...)}.
+    Para cada lote, escolhe o motoboy que termina a entrega dele mais cedo
+    (empate: quem tem menos paradas).
+
+    Devolve {motoboy_id: [viagem, viagem, ...]} só para quem recebeu pedidos novos.
+    Cada viagem é uma lista de paradas que saem juntas do restaurante. Se o motoboy
+    ainda não saiu, a primeira viagem já inclui as paradas que ele tinha."""
+    sim = {}
+    for mid, e in estados.items():
+        sim[mid] = {"volta": e["volta_s"], "viagens": [list(e["proxima"])] if e["proxima"] else [],
+                    "total": len(e["proxima"]), "recebeu": False}
     for lote in lotes:
-        primeiro = lote[0]
-        escolhido = min(motoboys, key=lambda m: (carga[m["id"]], haversine(m["lat"], m["lng"], primeiro["lat"], primeiro["lng"])))
-        atribuicoes[escolhido["id"]].extend(lote)
-        carga[escolhido["id"]] += len(lote)
-    return atribuicoes
+        melhor = None
+        for mid, s in sim.items():
+            atual = s["viagens"][-1] if s["viagens"] else []
+            if len(atual) + len(lote) <= MAX_PARADAS_VIAGEM:
+                fim = s["volta"] + tempo_viagem(atual + lote)
+            else:  # viagem atual cheia: este lote vai numa viagem seguinte
+                fim = s["volta"] + tempo_viagem(atual) + tempo_viagem(lote)
+            chave = (round(fim), s["total"], mid)
+            if melhor is None or chave < melhor[0]:
+                melhor = (chave, mid)
+        s = sim[melhor[1]]
+        if s["viagens"] and len(s["viagens"][-1]) + len(lote) <= MAX_PARADAS_VIAGEM:
+            s["viagens"][-1] = s["viagens"][-1] + lote
+        else:
+            if s["viagens"]:
+                s["volta"] += tempo_viagem(s["viagens"][-1])
+            s["viagens"].append(list(lote))
+        s["total"] += len(lote)
+        s["recebeu"] = True
+    return {mid: s["viagens"] for mid, s in sim.items() if s["recebeu"]}
+
+
+def _estados(con, ids=None):
+    """Lê do banco a situação dos motoboys (todos os de turno, ou os ids pedidos)."""
+    if ids is None:
+        motoboys = [dict(r._mapping) for r in con.execute(text(
+            "SELECT id, lat, lng, gps_lat, gps_lng, gps_em FROM motoboys WHERE ativo"))]
+    else:
+        motoboys = [dict(r._mapping) for r in con.execute(text(
+            "SELECT id, lat, lng, gps_lat, gps_lng, gps_em FROM motoboys WHERE id = :id"), {"id": ids[0]})]
+    abertas = {}
+    for r in con.execute(text(
+            "SELECT id, endereco, lat, lng, motoboy_id, ordem, despachado_em FROM pedidos "
+            "WHERE status = 'despachado' ORDER BY motoboy_id, ordem")):
+        abertas.setdefault(r.motoboy_id, []).append(dict(r._mapping))
+    ultimas = {r[0]: r[1] for r in con.execute(text(
+        "SELECT motoboy_id, MAX(concluido_em) FROM pedidos WHERE status = 'concluido' GROUP BY motoboy_id"))}
+    estados = {m["id"]: estado_motoboy(m, abertas.get(m["id"], []), ultimas.get(m["id"])) for m in motoboys}
+    return estados, abertas
+
+
+def _gravar_viagens(con, motoboy_id, viagens, saiu, abertas):
+    """Grava a ordem das paradas. Se o motoboy ainda não saiu, reescreve a rota inteira
+    (as paradas que ele já tinha podem mudar de posição). Se já saiu, as paradas dele
+    ficam como estão e as viagens novas entram depois delas."""
+    ordem = 0 if not saiu else max((p["ordem"] or 0 for p in abertas), default=0)
+    rotas = []
+    for viagem in viagens:
+        rota = ordenar_rota(RESTAURANTE, viagem)
+        for p in rota:
+            ordem += 1
+            con.execute(text(
+                "UPDATE pedidos SET status = 'despachado', motoboy_id = :m, ordem = :o, "
+                "despachado_em = COALESCE(despachado_em, CURRENT_TIMESTAMP) WHERE id = :id"),
+                {"m": motoboy_id, "o": ordem, "id": p["id"]})
+        rotas.extend(rota)
+    return rotas
 
 
 # ---------------------------------------------------------------------
@@ -633,7 +767,7 @@ def remover_motoboy(motoboy_id: str):
         if r.rowcount == 0:
             raise HTTPException(status_code=404, detail="Motoboy não encontrado")
         devolvidos = con.execute(text(
-            "UPDATE pedidos SET status = 'pendente', motoboy_id = NULL, ordem = NULL "
+            "UPDATE pedidos SET status = 'pendente', motoboy_id = NULL, ordem = NULL, despachado_em = NULL "
             "WHERE motoboy_id = :id AND status = 'despachado'"), {"id": motoboy_id}).rowcount
     return {"mensagem": "Motoboy removido", "pedidos_devolvidos": devolvidos}
 
@@ -658,8 +792,10 @@ def definir_turno(motoboy_id: str, t: Turno):
 @app.post("/despachar", dependencies=[Depends(exigir_chave)])
 def despachar():
     """Agrupa os pedidos pendentes, monta as rotas e distribui entre os motoboys.
-    As paradas novas entram no fim da rota de cada motoboy; as que ele ainda não
-    marcou como entregues continuam na rota dele.
+    Cada grupo vai para quem consegue entregá-lo mais cedo (veja planejar()).
+    Se o motoboy escolhido ainda não saiu do restaurante, os novos pedidos entram
+    na mesma viagem e a rota inteira é reorganizada; se já saiu, entram no fim,
+    para depois que ele voltar.
 
     _trava_despacho impede que dois cliques em "Despachar agora" (ou dois pedidos
     simultâneos) rodem ao mesmo tempo e embaralhem as rotas um do outro. Isso
@@ -672,32 +808,20 @@ def despachar():
         with engine.begin() as con:
             pedidos = [dict(r._mapping) for r in con.execute(text(
                 "SELECT id, endereco, lat, lng FROM pedidos WHERE status = 'pendente' ORDER BY criado_em, id"))]
-            motoboys_raw = [dict(r._mapping) for r in con.execute(text(
-                "SELECT id, lat, lng, gps_lat, gps_lng, gps_em FROM motoboys WHERE ativo"))]
-            motoboys = [{"id": m["id"],
-                         "lat": m["gps_lat"] if _gps_recente(m["gps_em"]) else m["lat"],
-                         "lng": m["gps_lng"] if _gps_recente(m["gps_em"]) else m["lng"]}
-                        for m in motoboys_raw]
             if not pedidos:
                 return {"mensagem": "Não há pedidos pendentes para despachar."}
-            if not motoboys:
+            estados, abertas = _estados(con)
+            if not estados:
                 return {"mensagem": "Nenhum motoboy de turno agora. Ligue o turno de alguém no painel."}
 
-            existentes = {r[0]: (r[1], r[2]) for r in con.execute(text(
-                "SELECT motoboy_id, COUNT(*), COALESCE(MAX(ordem), 0) FROM pedidos "
-                "WHERE status = 'despachado' GROUP BY motoboy_id"))}
-            carga_inicial = {m: n for m, (n, _) in existentes.items()}
-            atribuicoes = atribuir_motoboys(agrupar_pedidos(pedidos), motoboys, carga_inicial)
+            plano = planejar(agrupar_pedidos(pedidos), estados)
+            novos_ids = {p["id"] for p in pedidos}
             resultado = {}
-            for motoboy_id, lista in atribuicoes.items():
-                if not lista:
-                    continue
-                rota = ordenar_rota(RESTAURANTE, lista)
-                inicio = existentes.get(motoboy_id, (0, 0))[1]
-                for ordem, p in enumerate(rota, start=inicio + 1):
-                    con.execute(text("UPDATE pedidos SET status = 'despachado', motoboy_id = :m, ordem = :o WHERE id = :id"),
-                                {"m": motoboy_id, "o": ordem, "id": p["id"]})
-                resultado[motoboy_id] = rota
+            for motoboy_id, viagens in plano.items():
+                rota = _gravar_viagens(con, motoboy_id, viagens, estados[motoboy_id]["saiu"],
+                                       abertas.get(motoboy_id, []))
+                # Na resposta, só os pedidos novos deste despacho (as paradas antigas podem ter sido reordenadas).
+                resultado[motoboy_id] = [p for p in rota if p["id"] in novos_ids]
         return {"rotas": resultado}
     finally:
         _trava_despacho.release()
@@ -710,9 +834,10 @@ class Atribuicao(BaseModel):
 @app.post("/pedidos/{pedido_id}/atribuir", dependencies=[Depends(exigir_chave)])
 def atribuir_manual(pedido_id: str, corpo: Atribuicao):
     """Manda um pedido pendente direto para um motoboy escolhido, pulando o
-    agrupamento automático. A parada entra na melhor posição da rota que esse
-    motoboy já tem (recalculada), não necessariamente no fim. Funciona mesmo
-    se o motoboy estiver fora de turno, já que é uma escolha manual do restaurante."""
+    agrupamento automático. Se o motoboy ainda não saiu do restaurante, a parada
+    entra na melhor posição da rota dele (recalculada). Se já saiu, ela fica para
+    depois que ele voltar (no fim da lista). Funciona mesmo se o motoboy estiver
+    fora de turno, já que é uma escolha manual do restaurante."""
     if not _trava_despacho.acquire(timeout=15):
         raise HTTPException(status_code=503, detail="Já existe um despacho em andamento. Tente de novo em alguns segundos.")
     try:
@@ -721,18 +846,17 @@ def atribuir_manual(pedido_id: str, corpo: Atribuicao):
                                   {"id": pedido_id}).first()
             if pedido is None:
                 raise HTTPException(status_code=404, detail="Pedido não encontrado ou já não está mais pendente")
-            if con.execute(text("SELECT 1 FROM motoboys WHERE id = :id"), {"id": corpo.motoboy_id}).first() is None:
+            estados, abertas = _estados(con, ids=[corpo.motoboy_id])
+            if corpo.motoboy_id not in estados:
                 raise HTTPException(status_code=404, detail="Motoboy não encontrado")
 
-            ja_tem = [dict(r._mapping) for r in con.execute(text(
-                "SELECT id, endereco, lat, lng FROM pedidos WHERE motoboy_id = :m AND status = 'despachado'"),
-                {"m": corpo.motoboy_id})]
+            estado = estados[corpo.motoboy_id]
             novo = {"id": pedido[0], "endereco": pedido[1], "lat": pedido[2], "lng": pedido[3]}
-            rota = ordenar_rota(RESTAURANTE, ja_tem + [novo])
-            for ordem, p in enumerate(rota, start=1):
-                con.execute(text("UPDATE pedidos SET status = 'despachado', motoboy_id = :m, ordem = :o WHERE id = :id"),
-                            {"m": corpo.motoboy_id, "o": ordem, "id": p["id"]})
-        return {"mensagem": "Pedido atribuído", "rota": rota}
+            # Escolha manual: sem limite de paradas por viagem, junta tudo se ele ainda não saiu.
+            viagens = [estado["proxima"] + [novo]]
+            rota = _gravar_viagens(con, corpo.motoboy_id, viagens, estado["saiu"], abertas.get(corpo.motoboy_id, []))
+        aviso = " Ele já saiu: a entrega fica para depois que ele voltar ao restaurante." if estado["saiu"] else ""
+        return {"mensagem": "Pedido atribuído." + aviso, "rota": rota}
     finally:
         _trava_despacho.release()
 
@@ -908,18 +1032,26 @@ def geocodificar(c: Consulta):
 @app.get("/pedidos", dependencies=[Depends(exigir_chave)])
 def listar_pedidos():
     """Pedidos pendentes e em rota (os concluídos não aparecem).
-    Um pedido pendente há mais de PEDIDO_ATRASO_MIN minutos sem ser despachado
-    vem marcado com "atrasado": true, para o painel destacar."""
+    Vem marcado com "atrasado": true, para o painel destacar:
+      - pedido pendente há mais de PEDIDO_ATRASO_MIN minutos sem ser despachado;
+      - pedido em rota há mais de ROTA_ATRASO_MIN minutos sem ser entregue.
+    "minutos" diz há quanto tempo está na situação atual (na fila ou em rota)."""
     with engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
             "SELECT id, endereco, rua, numero, bairro, complemento, referencia, cep, telefone, lat, lng, "
-            "status, motoboy_id, ordem, criado_em FROM pedidos WHERE status IN ('pendente', 'despachado') "
+            "status, motoboy_id, ordem, criado_em, despachado_em FROM pedidos WHERE status IN ('pendente', 'despachado') "
             "ORDER BY status, motoboy_id, ordem, criado_em"))]
     agora = datetime.utcnow()
     for p in linhas:
         criado = _parse_ts(p.pop("criado_em"))
-        p["atrasado"] = bool(p["status"] == "pendente" and criado is not None
-                              and (agora - criado).total_seconds() / 60 >= PEDIDO_ATRASO_MIN)
+        despachado = _parse_ts(p.pop("despachado_em"))
+        if p["status"] == "pendente":
+            desde, limite = criado, PEDIDO_ATRASO_MIN
+        else:
+            desde, limite = despachado or criado, ROTA_ATRASO_MIN  # pedidos antigos não têm despachado_em
+        minutos = (agora - desde).total_seconds() / 60 if desde is not None else None
+        p["minutos"] = int(minutos) if minutos is not None else None
+        p["atrasado"] = bool(minutos is not None and minutos >= limite)
     return {"pedidos": linhas}
 
 
@@ -1234,17 +1366,20 @@ async function carregarFila(automatico) {
     ultimaFila = assinatura;
     const ul = $("fila"); ul.innerHTML = "";
     if (!r.pedidos.length) { const li = document.createElement("li"); li.textContent = "Nenhum pedido na fila."; ul.append(li); }
-    let atrasados = 0;
+    let atrasadosFila = 0, atrasadosRota = 0;
     r.pedidos.forEach((p) => {
       const li = document.createElement("li");
-      if (p.atrasado) { li.className = "atrasado"; atrasados++; }
+      if (p.atrasado) { li.className = "atrasado"; if (p.status === "pendente") atrasadosFila++; else atrasadosRota++; }
       const info = document.createElement("div"); info.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap";
       const t = document.createElement("span"); t.textContent = p.id + " - " + p.endereco;
       const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : "", p.telefone ? "Tel.: " + p.telefone : ""].filter(Boolean).join(" · ");
       if (extras) { const x = document.createElement("div"); x.className = "extra"; x.textContent = extras; t.append(x); }
       const s = document.createElement("span"); s.className = "tag" + (p.atrasado ? " atrasado" : "");
-      s.textContent = p.atrasado ? "esperando há mais de " + PEDIDO_ATRASO_MIN_TXT
-        : p.status === "pendente" ? "aguardando" : p.motoboy_id + " (parada " + p.ordem + ")";
+      if (p.status === "pendente") {
+        s.textContent = p.atrasado ? "esperando há " + p.minutos + " min" : "aguardando";
+      } else {
+        s.textContent = p.motoboy_id + " (parada " + p.ordem + ")" + (p.atrasado ? " · em rota há " + p.minutos + " min" : "");
+      }
       info.append(t, s); li.append(info);
       const acoes = document.createElement("div"); acoes.className = "acoes";
       if (p.status === "pendente") {
@@ -1272,7 +1407,10 @@ async function carregarFila(automatico) {
         const bt = document.createElement("button"); bt.textContent = "Atribuir";
         bt.onclick = async () => {
           bt.disabled = true;
-          try { await api("/pedidos/" + encodeURIComponent(p.id) + "/atribuir", "POST", {motoboy_id: sel.value}); carregarFila(); }
+          try {
+            const r2 = await api("/pedidos/" + encodeURIComponent(p.id) + "/atribuir", "POST", {motoboy_id: sel.value});
+            dizer($("msgDespacho"), p.id + " → " + sel.value + ". " + r2.mensagem, "ok"); carregarFila();
+          }
           catch (e) { dizer($("msgDespacho"), e.message, "erro"); bt.disabled = false; }
         };
         acoes.append(sel, bt);
@@ -1282,7 +1420,10 @@ async function carregarFila(automatico) {
       ul.append(li);
     });
     const aviso = $("alertaAtraso");
-    if (atrasados) { aviso.style.display = "block"; aviso.textContent = "⚠ " + atrasados + " pedido(s) esperando há mais de " + PEDIDO_ATRASO_MIN_TXT + " sem despachar."; }
+    const avisos = [];
+    if (atrasadosFila) avisos.push(atrasadosFila + " pedido(s) esperando há mais de " + PEDIDO_ATRASO_MIN_TXT + " sem despachar");
+    if (atrasadosRota) avisos.push(atrasadosRota + " pedido(s) em rota há mais de " + ROTA_ATRASO_MIN_TXT + " sem entregar");
+    if (avisos.length) { aviso.style.display = "block"; aviso.textContent = "⚠ " + avisos.join(" · ") + "."; }
     else { aviso.style.display = "none"; }
   } catch (e) { dizer($("msgDespacho"), e.message, "erro"); }
 }
@@ -1305,6 +1446,7 @@ $("despachar").onclick = async () => {
 let centro = null;
 let listaMotoboys = [];
 const PEDIDO_ATRASO_MIN_TXT = "__PEDIDO_ATRASO_MIN__ min";
+const ROTA_ATRASO_MIN_TXT = "__ROTA_ATRASO_MIN__ min";
 let ultimaListaMoto = "";
 async function carregarMotos(automatico) {
   if (!chave) return;
@@ -1404,7 +1546,8 @@ setInterval(() => atualizarTudo(true), 10000);
 </body>
 </html>
 """
-PAINEL_HTML = _com_mapa(PAINEL_HTML.replace("__PEDIDO_ATRASO_MIN__", str(int(PEDIDO_ATRASO_MIN))))
+PAINEL_HTML = _com_mapa(PAINEL_HTML.replace("__PEDIDO_ATRASO_MIN__", str(int(PEDIDO_ATRASO_MIN)))
+                        .replace("__ROTA_ATRASO_MIN__", str(int(ROTA_ATRASO_MIN))))
 
 
 # ---------------------------------------------------------------------
