@@ -20,6 +20,7 @@ cadastrá-lo) e só consegue ver a rota dele, enviando esse código no cabeçalh
 """
 
 import csv
+import hashlib
 import io
 import itertools
 import json
@@ -172,11 +173,83 @@ _bloqueado_ate = {}  # chave -> horário em que o bloqueio acaba
 
 
 def _ip(request: Request):
-    """IP de quem chamou. No Render, o IP real vem no cabeçalho X-Forwarded-For."""
+    """IP de quem chamou, usado para contar tentativas erradas.
+
+    Não dá para confiar no primeiro item do X-Forwarded-For: quem escreve esse
+    valor é o próprio navegador/atacante, e o Render só acrescenta itens no fim.
+    Quem manda um IP inventado a cada tentativa nunca seria bloqueado.
+    Por isso a ordem de preferência é:
+      1. True-Client-IP / CF-Connecting-IP: colocados pela Cloudflare, que fica na
+         frente do Render e sobrescreve o que o cliente mandar (é o que o suporte
+         do Render recomenda);
+      2. último item do X-Forwarded-For (acrescentado pelo proxy, não pelo cliente);
+      3. o IP da conexão (uso local, sem proxy)."""
+    for cabecalho in ("true-client-ip", "cf-connecting-ip"):
+        valor = request.headers.get(cabecalho, "").strip()
+        if valor:
+            return valor
     encaminhado = request.headers.get("x-forwarded-for", "")
     if encaminhado:
-        return encaminhado.split(",")[0].strip()
+        return encaminhado.split(",")[-1].strip()
     return request.client.host if request.client else "?"
+
+
+# Aviso nos logs se a chave do painel for curta: com uma chave longa e aleatória,
+# adivinhar por tentativa e erro é impossível, mesmo sem limite de tentativas.
+# Gere uma boa com:  python -c "import secrets; print(secrets.token_urlsafe(32))"
+if API_KEY and len(API_KEY) < 24:
+    logging.getLogger("uvicorn.error").warning(
+        "API_KEY tem só %d caracteres. Use uma chave de 32+ caracteres aleatórios.", len(API_KEY))
+
+
+# ---------------------------------------------------------------------
+# Códigos dos motoboys: no banco fica só um "hash" (uma impressão digital do
+# código), nunca o código em si. Quem vir o banco não descobre os códigos.
+# ---------------------------------------------------------------------
+_PBKDF2_ITERACOES = 200_000
+
+
+def hash_codigo(codigo: str) -> str:
+    sal = secrets.token_bytes(16)
+    h = hashlib.pbkdf2_hmac("sha256", codigo.encode(), sal, _PBKDF2_ITERACOES)
+    return f"pbkdf2${_PBKDF2_ITERACOES}${sal.hex()}${h.hex()}"
+
+
+# Calcular o hash é propositalmente lento (~0,1 s). Como a página do motoboy
+# consulta a cada 5 s, guardamos na memória os códigos que já conferiram certo,
+# para não repetir a conta toda vez. Se o código for trocado, o hash muda e o
+# que estava guardado deixa de valer.
+_codigos_conferidos = set()
+_trava_conferidos = threading.Lock()
+
+
+def codigo_confere(codigo: str, guardado: str) -> bool:
+    if not guardado.startswith("pbkdf2$"):
+        # Código antigo ainda sem hash (a migração abaixo converte todos ao iniciar).
+        return secrets.compare_digest(codigo.encode(), guardado.encode())
+    marca = hashlib.sha256((guardado + "\0" + codigo).encode()).hexdigest()
+    with _trava_conferidos:
+        if marca in _codigos_conferidos:
+            return True
+    try:
+        _, iteracoes, sal, esperado = guardado.split("$")
+        h = hashlib.pbkdf2_hmac("sha256", codigo.encode(), bytes.fromhex(sal), int(iteracoes))
+    except ValueError:
+        return False
+    ok = secrets.compare_digest(h.hex(), esperado)
+    if ok:
+        with _trava_conferidos:
+            if len(_codigos_conferidos) > 1000:
+                _codigos_conferidos.clear()
+            _codigos_conferidos.add(marca)
+    return ok
+
+
+# Migração: converte para hash os códigos que foram salvos em texto por versões anteriores.
+# Os motoboys continuam entrando com o mesmo código de sempre.
+with engine.begin() as con:
+    for _id, _codigo in con.execute(text("SELECT id, codigo FROM motoboys WHERE codigo NOT LIKE 'pbkdf2$%'")).all():
+        con.execute(text("UPDATE motoboys SET codigo = :c WHERE id = :id"), {"c": hash_codigo(_codigo), "id": _id})
 
 
 def _checar_bloqueio(*chaves):
@@ -220,7 +293,7 @@ def conferir_codigo(con, request: Request, motoboy_id: str, codigo: str):
     chave_ip, chave_moto = "moto-ip:" + _ip(request), "moto:" + motoboy_id.lower()
     _checar_bloqueio(chave_ip, chave_moto)
     m = con.execute(text("SELECT codigo FROM motoboys WHERE id = :id"), {"id": motoboy_id}).first()
-    if m is None or not secrets.compare_digest(codigo.encode(), m[0].encode()):
+    if m is None or not codigo or not codigo_confere(codigo, m[0]):
         _registrar_erro(chave_ip, LIMITE_POR_IP)
         _registrar_erro(chave_moto, LIMITE_POR_MOTOBOY)
         raise HTTPException(status_code=401, detail="Nome ou código incorretos")
@@ -245,7 +318,9 @@ class DadosPedido(BaseModel):
 
 
 class Pedido(DadosPedido):
-    id: str = Field(min_length=1, max_length=64)
+    """id é opcional. Sem ele, o servidor cria um. Com ele (ex.: número do pedido
+    vindo de outro sistema), mandar o mesmo id duas vezes não duplica o pedido."""
+    id: Optional[str] = Field(default=None, min_length=1, max_length=64)
 
 
 def _limpar_dados(con, dados):
@@ -454,16 +529,31 @@ def atribuir_motoboys(lotes, motoboys, carga_inicial=None):
 # ---------------------------------------------------------------------
 @app.post("/pedidos", dependencies=[Depends(exigir_chave)])
 def criar_pedido(pedido: Pedido):
-    """Registra um pedido novo. Se o id já existir, ele é ignorado (evita duplicar)."""
+    """Registra um pedido novo.
+    - Sem id: o servidor gera um id único (usado pelo painel). Antes o painel gerava
+      o id no navegador a partir do relógio; dois atendentes no mesmo instante geravam
+      o mesmo id e o segundo pedido era descartado sem aviso.
+    - Com id: se ele já existir, o pedido é ignorado (evita duplicar em reenvios)."""
+    sql = text(
+        "INSERT INTO pedidos (id, endereco, lat, lng, rua, numero, bairro, complemento, referencia, cep, telefone) "
+        "VALUES (:id, :endereco, :lat, :lng, :rua, :numero, :bairro, :complemento, :referencia, :cep, :telefone) "
+        "ON CONFLICT (id) DO NOTHING")
     with engine.begin() as con:
         dados = _limpar_dados(con, pedido.model_dump())
-        r = con.execute(text(
-            "INSERT INTO pedidos (id, endereco, lat, lng, rua, numero, bairro, complemento, referencia, cep, telefone) "
-            "VALUES (:id, :endereco, :lat, :lng, :rua, :numero, :bairro, :complemento, :referencia, :cep, :telefone) "
-            "ON CONFLICT (id) DO NOTHING"), dados)
-        criado = r.rowcount == 1
+        if dados["id"]:
+            criado = con.execute(sql, dados).rowcount == 1
+        else:
+            criado = False
+            for _ in range(10):  # colisão é raríssima (16 milhões de combinações), mas tentamos de novo
+                dados["id"] = "P" + secrets.token_hex(3).upper()
+                if con.execute(sql, dados).rowcount == 1:
+                    criado = True
+                    break
+            if not criado:
+                raise HTTPException(status_code=503, detail="Não consegui gerar um número para o pedido. Tente de novo.")
         total = con.execute(text("SELECT COUNT(*) FROM pedidos WHERE status = 'pendente'")).scalar()
-    return {"mensagem": "Pedido recebido" if criado else "Pedido já existia (ignorado)", "total_pendentes": total}
+    return {"mensagem": "Pedido recebido" if criado else "Pedido já existia (ignorado)",
+            "id": dados["id"], "criado": criado, "total_pendentes": total}
 
 
 @app.put("/pedidos/{pedido_id}", dependencies=[Depends(exigir_chave)])
@@ -510,11 +600,13 @@ def cancelar_pedido(pedido_id: str):
 @app.post("/motoboys", dependencies=[Depends(exigir_chave)])
 def cadastrar_motoboy(motoboy: Motoboy):
     """Cadastra o motoboy ou atualiza a localização/código dele se já existir."""
+    dados = motoboy.model_dump()
+    dados["codigo"] = hash_codigo(dados["codigo"])  # o banco guarda só o hash
     with engine.begin() as con:
         con.execute(text(
             "INSERT INTO motoboys (id, codigo, lat, lng) VALUES (:id, :codigo, :lat, :lng) "
             "ON CONFLICT (id) DO UPDATE SET codigo = excluded.codigo, lat = excluded.lat, lng = excluded.lng"),
-            motoboy.model_dump())
+            dados)
         total = con.execute(text("SELECT COUNT(*) FROM motoboys")).scalar()
     return {"mensagem": "Motoboy disponível", "total_disponiveis": total}
 
@@ -1116,9 +1208,9 @@ $("confirmar").onclick = async () => {
       await api("/pedidos/" + encodeURIComponent(editandoId), "PUT", corpo);
       dizer($("msgBusca"), "Pedido " + editandoId + " corrigido.", "ok");
     } else {
-      const id = "P" + Date.now().toString(36).toUpperCase();
-      await api("/pedidos", "POST", Object.assign({id: id}, corpo));
-      dizer($("msgBusca"), "Pedido " + id + " criado.", "ok");
+      // O número do pedido é gerado pelo servidor (garante que não se repete).
+      const r = await api("/pedidos", "POST", corpo);
+      dizer($("msgBusca"), "Pedido " + r.id + " criado.", "ok");
     }
     $("candidatos").innerHTML = ""; limparFormulario(); $("confirmacao").style.display = "none";
     carregarFila(); carregarBairros();
@@ -1126,10 +1218,20 @@ $("confirmar").onclick = async () => {
   $("confirmar").disabled = false;
 };
 
-async function carregarFila() {
+// A atualização automática (a cada 10 s) só redesenha a fila se algo mudou, e
+// espera enquanto alguém está com o seletor de motoboy aberto. Antes, ela
+// reconstruía tudo e apagava a escolha feita no "Atribuir" antes do clique.
+let ultimaFila = "";
+const escolhas = {};  // pedido -> motoboy escolhido no seletor (sobrevive às atualizações)
+async function carregarFila(automatico) {
   if (!chave) return;
   try {
     const r = await api("/pedidos");
+    const foco = document.activeElement;
+    if (automatico && foco && foco.tagName === "SELECT" && $("fila").contains(foco)) return;
+    const assinatura = JSON.stringify([r.pedidos, listaMotoboys.map((m) => m.id)]);
+    if (automatico && assinatura === ultimaFila) return;
+    ultimaFila = assinatura;
     const ul = $("fila"); ul.innerHTML = "";
     if (!r.pedidos.length) { const li = document.createElement("li"); li.textContent = "Nenhum pedido na fila."; ul.append(li); }
     let atrasados = 0;
@@ -1165,6 +1267,8 @@ async function carregarFila() {
       if (p.status === "pendente" && listaMotoboys.length) {
         const sel = document.createElement("select");
         listaMotoboys.forEach((m) => { const o = document.createElement("option"); o.value = m.id; o.textContent = m.id; sel.append(o); });
+        if (listaMotoboys.some((m) => m.id === escolhas[p.id])) sel.value = escolhas[p.id];
+        sel.onchange = () => { escolhas[p.id] = sel.value; };
         const bt = document.createElement("button"); bt.textContent = "Atribuir";
         bt.onclick = async () => {
           bt.disabled = true;
@@ -1201,12 +1305,16 @@ $("despachar").onclick = async () => {
 let centro = null;
 let listaMotoboys = [];
 const PEDIDO_ATRASO_MIN_TXT = "__PEDIDO_ATRASO_MIN__ min";
-async function carregarMotos() {
+let ultimaListaMoto = "";
+async function carregarMotos(automatico) {
   if (!chave) return;
   try {
     const r = await api("/motoboys");
     centro = r.centro;
     listaMotoboys = r.motoboys;
+    const assinatura = JSON.stringify(r.motoboys);
+    if (automatico && assinatura === ultimaListaMoto) return;  // nada mudou: não redesenha
+    ultimaListaMoto = assinatura;
     const ul = $("listaMoto"); ul.innerHTML = "";
     if (!r.motoboys.length) { const li = document.createElement("li"); li.textContent = "Nenhum motoboy cadastrado."; ul.append(li); }
     r.motoboys.forEach((m) => {
@@ -1239,7 +1347,8 @@ $("salvarMoto").onclick = async () => {
     if (!centro) await carregarMotos();
     if (!centro) throw new Error("Entre com a chave primeiro.");
     await api("/motoboys", "POST", {id: nome, codigo: codigo, lat: centro.lat, lng: centro.lng});
-    const link = location.origin + "/motoboy?id=" + encodeURIComponent(nome) + "&codigo=" + encodeURIComponent(codigo);
+    // O código vai depois do "#": essa parte do link não é enviada ao servidor.
+    const link = location.origin + "/motoboy?id=" + encodeURIComponent(nome) + "#codigo=" + encodeURIComponent(codigo);
     dizer($("msgMoto"), "Salvo! Link para enviar ao motoboy: " + link, "ok");
     $("motoNome").value = ""; $("motoCodigo").value = "";
     carregarMotos();
@@ -1286,10 +1395,11 @@ async function carregarBairros() {
 }
 
 // carregarMotos primeiro: carregarFila usa a lista de motoboys para o seletor de "Atribuir".
-async function atualizarTudo() { await carregarMotos(); await carregarFila(); await carregarResumo(); }
+// automatico = true só na atualização periódica; depois de um clique, sempre redesenha.
+async function atualizarTudo(automatico) { await carregarMotos(automatico); await carregarFila(automatico); await carregarResumo(); }
 atualizarTudo();
 carregarBairros();
-setInterval(atualizarTudo, 10000);
+setInterval(() => atualizarTudo(true), 10000);
 </script>
 </body>
 </html>
@@ -1345,7 +1455,8 @@ def atualizar_posicao(motoboy_id: str, p: Posicao, request: Request, x_codigo: s
 
 @app.get("/motoboy")
 def pagina_do_motoboy():
-    """Página com o mapa. Abra em /motoboy?id=NOME&codigo=CODIGO (não contém dados de clientes)."""
+    """Página com o mapa. Abra em /motoboy?id=NOME#codigo=CODIGO (não contém dados de clientes).
+    O código vai depois do "#" para não ser enviado ao servidor nem gravado nos logs."""
     return HTMLResponse(PAGINA_HTML)
 
 
@@ -1392,11 +1503,28 @@ PAGINA_HTML = r"""<!DOCTYPE html>
 <ul id="paradas"></ul>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script>
+// O código do motoboy não fica no endereço da página: o link novo traz o código
+// depois do "#" (essa parte nunca é enviada ao servidor nem aparece nos logs).
+// Ao abrir, o código é guardado neste celular e apagado da barra de endereço.
+// Links antigos (?codigo=...) continuam funcionando e são limpos do mesmo jeito.
 const qs = new URLSearchParams(location.search);
-const id = qs.get("id") || "", codigo = qs.get("codigo") || "";
+const hs = new URLSearchParams(location.hash.slice(1));
+const id = qs.get("id") || "";
+function lerCodigoGuardado(n) { try { return localStorage.getItem("codigo:" + n) || ""; } catch (e) { return ""; } }
+function guardarCodigo(n, c) { try { if (c) localStorage.setItem("codigo:" + n, c); else localStorage.removeItem("codigo:" + n); } catch (e) {} }
+let codigo = hs.get("codigo") || qs.get("codigo") || "";
+if (codigo && id) guardarCodigo(id, codigo);
+if (!codigo && id) codigo = lerCodigoGuardado(id);
+if (location.hash || qs.has("codigo")) {
+  history.replaceState(null, "", location.pathname + (id ? "?id=" + encodeURIComponent(id) : ""));
+}
 const nome = document.getElementById("nome"); nome.value = id;
 const cod = document.getElementById("codigo"); cod.value = codigo;
-document.getElementById("ir").onclick = () => { location.search = "?id=" + encodeURIComponent(nome.value.trim()) + "&codigo=" + encodeURIComponent(cod.value.trim()); };
+document.getElementById("ir").onclick = () => {
+  const n = nome.value.trim();
+  guardarCodigo(n, cod.value.trim());
+  location.href = location.pathname + "?id=" + encodeURIComponent(n);
+};
 
 const mapa = L.map("mapa").setView([-19.6156, -43.2258], 14);
 L.tileLayer(MAPA_URL, {maxZoom: 19, subdomains: "abc", attribution: MAPA_CREDITO}).addTo(mapa);
@@ -1494,6 +1622,7 @@ async function atualizar() {
     if (resp.status === 401 || resp.status === 429) {
       // Para de tentar sozinho: repetir com o código errado bloquearia o celular por excesso de erros.
       parado = true; ultimo = ""; camada.clearLayers(); document.getElementById("paradas").innerHTML = "";
+      if (resp.status === 401) guardarCodigo(id, "");  // esquece o código errado guardado no celular
       let txt = "Nome ou código incorretos. Confira e clique em Ver rota.";
       if (resp.status === 429) { try { txt = (await resp.json()).detail; } catch (e) {} }
       document.getElementById("msg").textContent = txt; return;
