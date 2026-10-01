@@ -168,6 +168,15 @@ for _coluna in (["concluido_em TIMESTAMP", "telefone TEXT", "cancelado_em TIMEST
     except Exception:
         pass
 
+# Índices: a página do motoboy consulta a cada 5 s e o painel a cada 10 s. Sem eles,
+# o banco relê a tabela de pedidos inteira em toda consulta, e isso pesa com os meses.
+with engine.begin() as con:
+    for _indice in ("idx_pedidos_status ON pedidos (status)",
+                    "idx_pedidos_motoboy ON pedidos (motoboy_id, status)",
+                    "idx_pedidos_criado ON pedidos (criado_em)",
+                    "idx_pedidos_concluido ON pedidos (concluido_em)"):
+        con.execute(text(f"CREATE INDEX IF NOT EXISTS {_indice}"))
+
 
 # ---------------------------------------------------------------------
 # Segurança
@@ -195,15 +204,15 @@ def _ip(request: Request):
     valor é o próprio navegador/atacante, e o Render só acrescenta itens no fim.
     Quem manda um IP inventado a cada tentativa nunca seria bloqueado.
     Por isso a ordem de preferência é:
-      1. True-Client-IP / CF-Connecting-IP: colocados pela Cloudflare, que fica na
-         frente do Render e sobrescreve o que o cliente mandar (é o que o suporte
-         do Render recomenda);
+      1. CF-Connecting-IP: a Cloudflare (que fica na frente do Render) sempre
+         escreve esse cabeçalho por cima do que o cliente mandar;
       2. último item do X-Forwarded-For (acrescentado pelo proxy, não pelo cliente);
-      3. o IP da conexão (uso local, sem proxy)."""
-    for cabecalho in ("true-client-ip", "cf-connecting-ip"):
-        valor = request.headers.get(cabecalho, "").strip()
-        if valor:
-            return valor
+      3. o IP da conexão (uso local, sem proxy).
+    True-Client-IP NÃO é usado: a Cloudflare só sobrescreve esse cabeçalho no plano
+    Enterprise; fora dele, o atacante poderia inventar um valor a cada tentativa."""
+    valor = request.headers.get("cf-connecting-ip", "").strip()
+    if valor:
+        return valor
     encaminhado = request.headers.get("x-forwarded-for", "")
     if encaminhado:
         return encaminhado.split(",")[-1].strip()
@@ -239,11 +248,24 @@ _codigos_conferidos = set()
 _trava_conferidos = threading.Lock()
 
 
+def _marca(codigo: str, guardado: str) -> str:
+    return hashlib.sha256((guardado + "\0" + codigo).encode()).hexdigest()
+
+
+def codigo_ja_conferido(codigo: str, guardado: str) -> bool:
+    """True se este código já conferiu certo antes (está no cache). É rápido e só
+    dá True para quem sabe o código, então pode ser usado antes do bloqueio."""
+    if not codigo or not guardado.startswith("pbkdf2$"):
+        return False
+    with _trava_conferidos:
+        return _marca(codigo, guardado) in _codigos_conferidos
+
+
 def codigo_confere(codigo: str, guardado: str) -> bool:
     if not guardado.startswith("pbkdf2$"):
         # Código antigo ainda sem hash (a migração abaixo converte todos ao iniciar).
         return secrets.compare_digest(codigo.encode(), guardado.encode())
-    marca = hashlib.sha256((guardado + "\0" + codigo).encode()).hexdigest()
+    marca = _marca(codigo, guardado)
     with _trava_conferidos:
         if marca in _codigos_conferidos:
             return True
@@ -305,10 +327,18 @@ def exigir_chave(request: Request, x_api_key: str = Header(default="")):
 
 
 def conferir_codigo(con, request: Request, motoboy_id: str, codigo: str):
-    """Confere o código do motoboy, com limite de tentativas erradas."""
+    """Confere o código do motoboy, com limite de tentativas erradas.
+
+    O bloqueio por nome vale para todos os IPs; sem cuidado, qualquer pessoa que
+    soubesse o nome ("Carlos") poderia errar 30 vezes de propósito e deixar o
+    motoboy 15 min sem ver a rota. Por isso, quem manda um código que já conferiu
+    certo antes (cache em memória) passa direto, mesmo com o nome bloqueado.
+    O atacante não consegue usar esse atalho sem saber o código."""
     chave_ip, chave_moto = "moto-ip:" + _ip(request), "moto:" + motoboy_id.lower()
-    _checar_bloqueio(chave_ip, chave_moto)
     m = con.execute(text("SELECT codigo FROM motoboys WHERE id = :id"), {"id": motoboy_id}).first()
+    if m is not None and codigo_ja_conferido(codigo, m[0]):
+        return
+    _checar_bloqueio(chave_ip, chave_moto)
     if m is None or not codigo or not codigo_confere(codigo, m[0]):
         _registrar_erro(chave_ip, LIMITE_POR_IP)
         _registrar_erro(chave_moto, LIMITE_POR_MOTOBOY)
@@ -356,7 +386,8 @@ def _limpar_dados(con, dados):
 
 class Motoboy(BaseModel):
     id: str = Field(min_length=1, max_length=64)
-    codigo: str = Field(min_length=4, max_length=64)
+    # Mínimo de 6, igual ao painel: com 4 dígitos, tentando de vários IPs, dá para adivinhar em poucos dias.
+    codigo: str = Field(min_length=6, max_length=64)
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
 
@@ -644,22 +675,36 @@ def _estados(con, ids=None):
     return estados, abertas
 
 
-def _gravar_viagens(con, motoboy_id, viagens, saiu, abertas):
+def _montar_rota(viagens):
+    """Ordena as paradas de cada viagem e junta tudo numa lista só.
+    Pode consultar o serviço de rotas (alguns segundos), por isso deve ser chamada
+    FORA da transação do banco, para não segurar o banco esperando a internet."""
+    rota = []
+    for viagem in viagens:
+        rota.extend(ordenar_rota(RESTAURANTE, viagem))
+    return rota
+
+
+def _gravar_rota(con, motoboy_id, rota, saiu, abertas):
     """Grava a ordem das paradas. Se o motoboy ainda não saiu, reescreve a rota inteira
     (as paradas que ele já tinha podem mudar de posição). Se já saiu, as paradas dele
-    ficam como estão e as viagens novas entram depois delas."""
+    ficam como estão e as viagens novas entram depois delas.
+
+    O UPDATE só mexe em pedidos ainda pendentes ou já deste motoboy em rota. Assim,
+    se ele marcar uma parada como entregue enquanto o despacho está calculando,
+    ela não volta para a rota. Devolve só as paradas que foram gravadas."""
     ordem = 0 if not saiu else max((p["ordem"] or 0 for p in abertas), default=0)
-    rotas = []
-    for viagem in viagens:
-        rota = ordenar_rota(RESTAURANTE, viagem)
-        for p in rota:
-            ordem += 1
-            con.execute(text(
-                "UPDATE pedidos SET status = 'despachado', motoboy_id = :m, ordem = :o, "
-                "despachado_em = COALESCE(despachado_em, CURRENT_TIMESTAMP) WHERE id = :id"),
-                {"m": motoboy_id, "o": ordem, "id": p["id"]})
-        rotas.extend(rota)
-    return rotas
+    gravadas = []
+    for p in rota:
+        ordem += 1
+        r = con.execute(text(
+            "UPDATE pedidos SET status = 'despachado', motoboy_id = :m, ordem = :o, "
+            "despachado_em = COALESCE(despachado_em, CURRENT_TIMESTAMP) WHERE id = :id "
+            "AND (status = 'pendente' OR (status = 'despachado' AND motoboy_id = :m))"),
+            {"m": motoboy_id, "o": ordem, "id": p["id"]})
+        if r.rowcount == 1:
+            gravadas.append(p)
+    return gravadas
 
 
 # ---------------------------------------------------------------------
@@ -790,15 +835,22 @@ def listar_motoboys():
 
 @app.delete("/motoboys/{motoboy_id}", dependencies=[Depends(exigir_chave)])
 def remover_motoboy(motoboy_id: str):
-    """Remove o motoboy. As paradas que ele ainda não entregou voltam para a fila."""
-    with engine.begin() as con:
-        r = con.execute(text("DELETE FROM motoboys WHERE id = :id"), {"id": motoboy_id})
-        if r.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Motoboy não encontrado")
-        devolvidos = con.execute(text(
-            "UPDATE pedidos SET status = 'pendente', motoboy_id = NULL, ordem = NULL, despachado_em = NULL "
-            "WHERE motoboy_id = :id AND status = 'despachado'"), {"id": motoboy_id}).rowcount
-    return {"mensagem": "Motoboy removido", "pedidos_devolvidos": devolvidos}
+    """Remove o motoboy. As paradas que ele ainda não entregou voltam para a fila.
+    Usa a mesma trava do despacho: senão, um despacho rodando ao mesmo tempo podia
+    entregar pedidos novos a um motoboy que acabou de ser removido (ficariam presos)."""
+    if not _trava_despacho.acquire(timeout=15):
+        raise HTTPException(status_code=503, detail="Já existe um despacho em andamento. Tente de novo em alguns segundos.")
+    try:
+        with engine.begin() as con:
+            r = con.execute(text("DELETE FROM motoboys WHERE id = :id"), {"id": motoboy_id})
+            if r.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Motoboy não encontrado")
+            devolvidos = con.execute(text(
+                "UPDATE pedidos SET status = 'pendente', motoboy_id = NULL, ordem = NULL, despachado_em = NULL "
+                "WHERE motoboy_id = :id AND status = 'despachado'"), {"id": motoboy_id}).rowcount
+        return {"mensagem": "Motoboy removido", "pedidos_devolvidos": devolvidos}
+    finally:
+        _trava_despacho.release()
 
 
 class Turno(BaseModel):
@@ -834,7 +886,8 @@ def despachar():
     if not _trava_despacho.acquire(timeout=15):
         raise HTTPException(status_code=503, detail="Já existe um despacho em andamento. Tente de novo em alguns segundos.")
     try:
-        with engine.begin() as con:
+        # 1. Lê a situação atual (transação curta, só leitura).
+        with engine.connect() as con:
             pedidos = [dict(r._mapping) for r in con.execute(text(
                 "SELECT id, num, endereco, lat, lng FROM pedidos WHERE status = 'pendente' ORDER BY criado_em, id"))]
             if not pedidos:
@@ -843,14 +896,19 @@ def despachar():
             if not estados:
                 return {"mensagem": "Nenhum motoboy de turno agora. Ligue o turno de alguém no painel."}
 
-            plano = planejar(agrupar_pedidos(pedidos), estados)
-            novos_ids = {p["id"] for p in pedidos}
-            resultado = {}
-            for motoboy_id, viagens in plano.items():
-                rota = _gravar_viagens(con, motoboy_id, viagens, estados[motoboy_id]["saiu"],
-                                       abertas.get(motoboy_id, []))
+        # 2. Planeja e ordena as paradas sem o banco aberto (pode consultar o serviço de rotas).
+        plano = planejar(agrupar_pedidos(pedidos), estados)
+        rotas = {mid: _montar_rota(viagens) for mid, viagens in plano.items()}
+
+        # 3. Grava tudo de uma vez (transação curta).
+        novos_ids = {p["id"] for p in pedidos}
+        resultado = {}
+        with engine.begin() as con:
+            for motoboy_id, rota in rotas.items():
+                gravadas = _gravar_rota(con, motoboy_id, rota, estados[motoboy_id]["saiu"],
+                                        abertas.get(motoboy_id, []))
                 # Na resposta, só os pedidos novos deste despacho (as paradas antigas podem ter sido reordenadas).
-                resultado[motoboy_id] = [p for p in rota if p["id"] in novos_ids]
+                resultado[motoboy_id] = [p for p in gravadas if p["id"] in novos_ids]
         return {"rotas": resultado}
     finally:
         _trava_despacho.release()
@@ -870,7 +928,7 @@ def atribuir_manual(pedido_id: str, corpo: Atribuicao):
     if not _trava_despacho.acquire(timeout=15):
         raise HTTPException(status_code=503, detail="Já existe um despacho em andamento. Tente de novo em alguns segundos.")
     try:
-        with engine.begin() as con:
+        with engine.connect() as con:
             pedido = con.execute(text("SELECT id, endereco, lat, lng FROM pedidos WHERE id = :id AND status = 'pendente'"),
                                   {"id": pedido_id}).first()
             if pedido is None:
@@ -879,11 +937,15 @@ def atribuir_manual(pedido_id: str, corpo: Atribuicao):
             if corpo.motoboy_id not in estados:
                 raise HTTPException(status_code=404, detail="Motoboy não encontrado")
 
-            estado = estados[corpo.motoboy_id]
-            novo = {"id": pedido[0], "endereco": pedido[1], "lat": pedido[2], "lng": pedido[3]}
-            # Escolha manual: sem limite de paradas por viagem, junta tudo se ele ainda não saiu.
-            viagens = [estado["proxima"] + [novo]]
-            rota = _gravar_viagens(con, corpo.motoboy_id, viagens, estado["saiu"], abertas.get(corpo.motoboy_id, []))
+        estado = estados[corpo.motoboy_id]
+        novo = {"id": pedido[0], "endereco": pedido[1], "lat": pedido[2], "lng": pedido[3]}
+        # Escolha manual: sem limite de paradas por viagem, junta tudo se ele ainda não saiu.
+        # A rota é calculada fora da transação (pode consultar o serviço de rotas).
+        rota = _montar_rota([estado["proxima"] + [novo]])
+        with engine.begin() as con:
+            rota = _gravar_rota(con, corpo.motoboy_id, rota, estado["saiu"], abertas.get(corpo.motoboy_id, []))
+        if not any(p["id"] == pedido_id for p in rota):
+            raise HTTPException(status_code=409, detail="O pedido mudou enquanto era atribuído. Atualize a tela e tente de novo.")
         aviso = " Ele já saiu: a entrega fica para depois que ele voltar ao restaurante." if estado["saiu"] else ""
         return {"mensagem": "Pedido atribuído." + aviso, "rota": rota}
     finally:
@@ -906,14 +968,14 @@ def resumo():
     Pedidos entregues antes desta atualização não têm concluido_em salvo e por
     isso não entram na conta de "hoje" nem na média, mesmo que tenham sido
     entregues no dia — só afeta o dia da migração, não o uso normal depois dela."""
-    agora_local = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET_HORAS)
-    inicio_local = agora_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    inicio_utc = inicio_local - timedelta(hours=TIMEZONE_OFFSET_HORAS)
+    inicio_utc = _inicio_do_dia_utc()
     with engine.connect() as con:
         pendentes = con.execute(text("SELECT COUNT(*) FROM pedidos WHERE status = 'pendente'")).scalar()
         em_rota = con.execute(text("SELECT COUNT(*) FROM pedidos WHERE status = 'despachado'")).scalar()
+        # Filtra a data no próprio banco (usa o índice), em vez de trazer todo o histórico.
         linhas = con.execute(text(
-            "SELECT criado_em, concluido_em FROM pedidos WHERE status = 'concluido' AND concluido_em IS NOT NULL")).all()
+            "SELECT criado_em, concluido_em FROM pedidos WHERE status = 'concluido' AND concluido_em >= :inicio"),
+            {"inicio": inicio_utc}).all()
     entregues_hoje, soma_minutos = 0, 0.0
     for criado, concluido in linhas:
         concluido_t = _parse_ts(concluido)
@@ -947,7 +1009,7 @@ def historico_csv(dias: int = 30):
     with engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
             "SELECT id, num, endereco, bairro, complemento, referencia, telefone, motoboy_id, criado_em, concluido_em FROM pedidos "
-            "WHERE status = 'concluido' AND concluido_em IS NOT NULL ORDER BY concluido_em"))]
+            "WHERE status = 'concluido' AND concluido_em >= :inicio ORDER BY concluido_em"), {"inicio": inicio_utc})]
 
     saida = io.StringIO()
     saida.write("\ufeff")  # marca de ordem de bytes: sem isso o Excel no Windows pode exibir acentos errados
@@ -1107,7 +1169,8 @@ PAINEL_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="google" content="notranslate">
 <title>Painel do restaurante</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<!-- integrity: se o arquivo do CDN for alterado por alguém, o navegador se recusa a usá-lo (protege a API_KEY guardada na página). Hashes oficiais do Leaflet 1.9.4. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <style>
  #mapaConfirma{height:340px;border-radius:8px;margin:8px 0}
  .pino{width:22px;height:22px;border-radius:50%;background:#dc2626;border:3px solid #fff;box-shadow:0 0 4px #000}
@@ -1221,7 +1284,7 @@ PAINEL_HTML = r"""<!DOCTYPE html>
   <div id="msgMoto" style="word-break:break-all"></div>
  </section>
 </main>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 let chave = sessionStorage.getItem("chave") || "";
 const $ = (i) => document.getElementById(i);
@@ -1663,7 +1726,8 @@ PAGINA_HTML = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Minha rota</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<!-- integrity: se o arquivo do CDN for alterado por alguém, o navegador se recusa a usá-lo (protege a API_KEY guardada na página). Hashes oficiais do Leaflet 1.9.4. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <style>
  body{font-family:system-ui,sans-serif;margin:0;background:#f5f5f5;color:#222}
  header{padding:12px 16px;background:#1f2937;color:#fff;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -1701,7 +1765,7 @@ PAGINA_HTML = r"""<!DOCTYPE html>
 <div id="mapa"></div>
 <div id="msg"></div>
 <ul id="paradas"></ul>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 // O código do motoboy não fica no endereço da página: o link novo traz o código
 // depois do "#" (essa parte nunca é enviada ao servidor nem aparece nos logs).
