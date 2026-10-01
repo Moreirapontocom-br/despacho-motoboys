@@ -126,6 +126,34 @@ def test_listagem_de_motoboys_nao_mostra_codigos(api):
     assert "codigo" not in resposta and "pbkdf2" not in resposta
 
 
+def test_codigo_do_motoboy_precisa_de_6_caracteres(api):
+    r = api.post("/motoboys", json={"id": "Curto", "codigo": "1234", "lat": R["lat"], "lng": R["lng"]},
+                 headers=CHAVE)
+    assert r.status_code == 422
+
+
+def test_true_client_ip_inventado_nao_escapa_do_bloqueio(api):
+    """Fora do plano Enterprise da Cloudflare, o True-Client-IP é escrito pelo próprio
+    atacante. Trocar esse valor a cada tentativa não pode zerar a contagem."""
+    for i in range(sistema.LIMITE_POR_IP):
+        api.get("/status", headers={"X-API-Key": "errada", "True-Client-IP": f"1.2.3.{i}"})
+    r = api.get("/status", headers={"X-API-Key": "errada", "True-Client-IP": "5.5.5.5"})
+    assert r.status_code == 429
+
+
+def test_atacante_nao_tranca_o_motoboy_que_ja_esta_usando_a_pagina(api):
+    """Alguém erra o código do Carlos de vários IPs até bloquear o nome dele.
+    O atacante fica bloqueado, mas o Carlos, que já tinha entrado, continua vendo a rota."""
+    novo_motoboy(api, "Carlos")
+    assert ver_rota(api, "Carlos").status_code == 200  # Carlos já está com a página aberta
+    for i in range(sistema.LIMITE_POR_MOTOBOY):
+        api.get("/rotas/Carlos", headers={"X-Codigo": "chute", "CF-Connecting-IP": f"10.0.0.{i}"})
+    atacante = api.get("/rotas/Carlos", headers={"X-Codigo": "chute", "CF-Connecting-IP": "10.0.1.1"})
+    assert atacante.status_code == 429
+    carlos = api.get("/rotas/Carlos", headers={"X-Codigo": CODIGO, "CF-Connecting-IP": "200.1.1.1"})
+    assert carlos.status_code == 200
+
+
 # ---------------------------------------------------------------------
 # Pedidos
 # ---------------------------------------------------------------------
@@ -276,6 +304,31 @@ def test_remover_motoboy_devolve_as_paradas_para_a_fila(api):
     status, motoboy, despachado = sql("SELECT status, motoboy_id, despachado_em FROM pedidos WHERE id = :p",
                                       p=pid).first()
     assert (status, motoboy, despachado) == ("pendente", None, None)
+
+
+def test_pedido_entregue_durante_o_despacho_nao_volta_para_a_rota(api, monkeypatch):
+    """O despacho lê os pedidos, calcula as rotas (pode levar segundos) e só depois grava.
+    Se o motoboy aperta "Entregue" nesse meio-tempo, a entrega não pode ser desfeita."""
+    novo_motoboy(api, "Ana")
+    primeiro = novo_pedido(api, lat=-19.625, lng=-43.235)["id"]
+    api.post("/despachar", headers=CHAVE)
+    segundo = novo_pedido(api, lat=-19.620, lng=-43.230)["id"]
+
+    original = sistema._montar_rota
+    ja_entregou = []
+
+    def montar_com_entrega_no_meio(viagens):
+        if not ja_entregou:  # Ana marca a entrega enquanto o despacho está calculando
+            ja_entregou.append(True)
+            assert api.post(f"/rotas/Ana/entregar/{primeiro}", headers={"X-Codigo": CODIGO}).status_code == 200
+        return original(viagens)
+
+    monkeypatch.setattr(sistema, "_montar_rota", montar_com_entrega_no_meio)
+    api.post("/despachar", headers=CHAVE)
+
+    assert ja_entregou
+    assert sql("SELECT status FROM pedidos WHERE id = :p", p=primeiro).scalar() == "concluido"
+    assert rota("Ana") == [segundo]
 
 
 # ---------------------------------------------------------------------

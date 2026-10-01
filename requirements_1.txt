@@ -1,0 +1,8 @@
+# Versões fixas: o Render instala exatamente estas, e uma versão nova de alguma
+# biblioteca não quebra o site sem você ter mexido em nada.
+# Para atualizar: troque o número aqui, rode os testes (pytest) e só então suba.
+fastapi==0.142.2
+pydantic==2.13.5
+uvicorn==0.54.0
+SQLAlchemy==2.1.1
+psycopg[binary]==3.3.6
