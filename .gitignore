@@ -1,0 +1,21 @@
+# Banco de dados local de testes (nunca subir: pode ter pedidos e telefones de clientes)
+*.db
+*.sqlite
+*.sqlite3
+
+# Arquivos com chaves e senhas
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Sistema e editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
