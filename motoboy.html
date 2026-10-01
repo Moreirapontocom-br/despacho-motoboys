@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minha rota</title>
+<!-- integrity: se o arquivo do CDN for alterado por alguém, o navegador se recusa a usá-lo (protege a API_KEY guardada na página). Hashes oficiais do Leaflet 1.9.4. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+ body{font-family:system-ui,sans-serif;margin:0;background:#f5f5f5;color:#222}
+ header{padding:12px 16px;background:#1f2937;color:#fff;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+ header input{padding:6px;border-radius:6px;border:0}
+ header button{padding:6px 12px;border:0;border-radius:6px;background:#10b981;color:#fff}
+ #modo{padding:8px 16px;background:#e5e7eb}
+ #modo select{padding:6px;border-radius:6px;font-size:1rem}
+ #mapa{height:50vh}
+ #msg{padding:12px 16px}
+ #paradas{list-style:none;margin:0;padding:0 8px 8px}
+ #paradas li{background:#fff;margin:8px 0;padding:10px 12px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+ #paradas a{background:#2563eb;color:#fff;padding:6px 10px;border-radius:6px;text-decoration:none}
+ .num{background:#2563eb;color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:bold;border:2px solid #fff}
+ .rest{background:#10b981}
+ .acoes{display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+ .ent{background:#10b981;color:#fff;border:0;border-radius:6px;padding:6px 10px;font-size:1rem;cursor:pointer}
+ .ent:disabled{opacity:.5}
+ .completa{display:inline-block;margin-left:8px;background:#10b981;color:#fff;padding:6px 10px;border-radius:6px;text-decoration:none}
+ #paradas a.sec{background:#6b7280}
+ .extra{font-size:.9rem;color:#b45309;font-weight:600;margin-top:3px}
+ #paradas a.ligar{background:#059669}
+ .cancelado{background:#b91c1c;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;font-weight:600}
+ .cancelado button{background:#fff;color:#b91c1c;border:0;border-radius:6px;padding:8px 12px;font-size:1rem;font-weight:700;flex-shrink:0}
+</style>
+</head>
+<body>
+<header>
+ <strong>Motoboy:</strong>
+ <input id="nome" placeholder="seu nome (id)">
+ <input id="codigo" type="password" size="8" placeholder="código">
+ <button id="ir">Ver rota</button>
+</header>
+<div id="cancelados"></div>
+<div id="modo">Saindo de: <select id="sel"><option value="rest">do restaurante</option><option value="rua">da minha posição</option></select></div>
+<div id="mapa"></div>
+<div id="msg"></div>
+<ul id="paradas"></ul>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+/*__CONFIG__*/
+const MAPA_URL = CONFIG.mapaUrl, MAPA_CREDITO = CONFIG.mapaCredito;
+
+// O código do motoboy não fica no endereço da página: o link novo traz o código
+// depois do "#" (essa parte nunca é enviada ao servidor nem aparece nos logs).
+// Ao abrir, o código é guardado neste celular e apagado da barra de endereço.
+// Links antigos (?codigo=...) continuam funcionando e são limpos do mesmo jeito.
+const qs = new URLSearchParams(location.search);
+const hs = new URLSearchParams(location.hash.slice(1));
+const id = qs.get("id") || "";
+function lerCodigoGuardado(n) { try { return localStorage.getItem("codigo:" + n) || ""; } catch (e) { return ""; } }
+function guardarCodigo(n, c) { try { if (c) localStorage.setItem("codigo:" + n, c); else localStorage.removeItem("codigo:" + n); } catch (e) {} }
+let codigo = hs.get("codigo") || qs.get("codigo") || "";
+if (codigo && id) guardarCodigo(id, codigo);
+if (!codigo && id) codigo = lerCodigoGuardado(id);
+if (location.hash || qs.has("codigo")) {
+  history.replaceState(null, "", location.pathname + (id ? "?id=" + encodeURIComponent(id) : ""));
+}
+const nome = document.getElementById("nome"); nome.value = id;
+const cod = document.getElementById("codigo"); cod.value = codigo;
+document.getElementById("ir").onclick = () => {
+  const n = nome.value.trim();
+  guardarCodigo(n, cod.value.trim());
+  location.href = location.pathname + "?id=" + encodeURIComponent(n);
+};
+
+const mapa = L.map("mapa").setView([CONFIG.restaurante.lat, CONFIG.restaurante.lng], 14);
+L.tileLayer(MAPA_URL, {maxZoom: 19, subdomains: "abc", attribution: MAPA_CREDITO}).addTo(mapa);
+const camada = L.layerGroup().addTo(mapa);
+let ultimo = "";
+let modo = "rest";
+try { if (localStorage.getItem("modo") === "rua") modo = "rua"; } catch (e) {}
+const sel = document.getElementById("sel"); sel.value = modo;
+sel.onchange = () => { modo = sel.value; try { localStorage.setItem("modo", modo); } catch (e) {} ultimo = ""; atualizar(); vigiarPosicao(); };
+
+// Em "da minha posição", a página manda o GPS sozinha de vez em quando, para o
+// despacho saber quem está mais perto de verdade. Se o celular negar a permissão
+// de localização, isso é ignorado e o resto da página continua funcionando normal.
+let vigia = null, ultimoEnvioGps = 0;
+function vigiarPosicao() {
+  if (vigia !== null) { navigator.geolocation.clearWatch(vigia); vigia = null; }
+  if (modo !== "rua" || !id || !codigo || !navigator.geolocation) return;
+  vigia = navigator.geolocation.watchPosition(
+    (pos) => {
+      const agora = Date.now();
+      if (parado || agora - ultimoEnvioGps < 45000) return;  // no máximo 1 envio a cada 45 s
+      ultimoEnvioGps = agora;
+      fetch("/rotas/" + encodeURIComponent(id) + "/posicao", {
+        method: "POST", headers: {"X-Codigo": codigo, "Content-Type": "application/json"},
+        body: JSON.stringify({lat: pos.coords.latitude, lng: pos.coords.longitude})
+      }).catch(() => {});
+    },
+    () => {},
+    {enableHighAccuracy: false, maximumAge: 60000, timeout: 20000}
+  );
+}
+vigiarPosicao();
+
+function icone(texto, classe) {
+  return L.divIcon({className: "", html: '<div class="num ' + (classe || "") + '">' + texto + "</div>", iconSize: [26, 26]});
+}
+
+// Aviso de pedido cancelado: fica na tela até o motoboy tocar em "Entendi".
+// Os já vistos ficam guardados no celular para o aviso não voltar.
+const chaveVistos = "cancelVistos:" + id;
+let vistos = new Set();
+try { vistos = new Set(JSON.parse(localStorage.getItem(chaveVistos) || "[]")); } catch (e) {}
+const jaVibrou = new Set();
+function mostrarCancelados(lista) {
+  const caixa = document.getElementById("cancelados");
+  caixa.innerHTML = "";
+  (lista || []).filter((c) => !vistos.has(c.id)).forEach((c) => {
+    const d = document.createElement("div"); d.className = "cancelado";
+    const t = document.createElement("span");
+    t.textContent = "PEDIDO " + c.rotulo + " CANCELADO — " + c.endereco + (c.complemento ? " (" + c.complemento + ")" : "") +
+      ". Não entregue. Se já estiver com a comida, fale com o restaurante.";
+    const b = document.createElement("button"); b.textContent = "Entendi";
+    b.onclick = () => {
+      vistos.add(c.id);
+      try { localStorage.setItem(chaveVistos, JSON.stringify([...vistos].slice(-50))); } catch (e) {}
+      d.remove();
+    };
+    d.append(t, b); caixa.append(d);
+    if (!jaVibrou.has(c.id)) { jaVibrou.add(c.id); try { navigator.vibrate && navigator.vibrate([400, 200, 400]); } catch (e) {} }
+  });
+}
+
+function desenhar(dados) {
+  mostrarCancelados(dados.cancelados);
+  const msg = document.getElementById("msg");
+  const lista = document.getElementById("paradas");
+  camada.clearLayers(); lista.innerHTML = "";
+  if (!dados.paradas.length) { msg.textContent = "Nenhuma rota no momento. Esta página atualiza sozinha."; return; }
+  msg.textContent = dados.paradas.length + " parada(s) na sua rota:";
+  const ll = (x) => x.lat + "," + x.lng;
+  const ps = dados.paradas.slice(0, 10);
+  const origem = encodeURIComponent(dados.restaurante.endereco || ll(dados.restaurante));
+  const pOrigem = modo === "rua" ? "" : "&origin=" + origem;
+  const meio = ps.slice(0, -1).map((x) => x.endereco).join("|");
+  const rc = document.createElement("a"); rc.textContent = modo === "rua" ? "Rota completa no Maps (da minha posição)" : "Rota completa no Maps (saindo do restaurante)"; rc.target = "_blank"; rc.className = "completa";
+  rc.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + encodeURIComponent(ps[ps.length - 1].endereco) + (meio ? "&waypoints=" + encodeURIComponent(meio) : "");
+  msg.append(" ", rc);
+  const r = dados.restaurante, pontos = [[r.lat, r.lng]];
+  L.marker([r.lat, r.lng], {icon: icone("R", "rest")}).addTo(camada);
+  dados.paradas.forEach((p, i) => {
+    pontos.push([p.lat, p.lng]);
+    L.marker([p.lat, p.lng], {icon: icone(i + 1)}).addTo(camada);
+    const li = document.createElement("li");
+    const t = document.createElement("span"); t.textContent = (i + 1) + ". " + (p.rotulo || p.id) + " - " + p.endereco;
+    const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : ""].filter(Boolean);
+    extras.forEach((txt) => { const x = document.createElement("div"); x.className = "extra"; x.textContent = txt; t.append(x); });
+    const a = document.createElement("a"); a.textContent = "Navegar"; a.target = "_blank";
+    a.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + encodeURIComponent(p.endereco);
+    const b = document.createElement("a"); b.textContent = "Pelo ponto"; b.target = "_blank"; b.className = "sec";
+    b.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + p.lat + "," + p.lng;
+    let lig = null;
+    const digitos = (p.telefone || "").replace(/\D/g, "");
+    if (digitos.length >= 10) {
+      lig = document.createElement("a"); lig.textContent = "Ligar"; lig.className = "ligar";
+      lig.href = "tel:+55" + digitos;
+    }
+    const e = document.createElement("button"); e.textContent = "Entregue"; e.className = "ent";
+    e.onclick = async () => {
+      if (!confirm("Marcar como entregue?\n" + p.endereco + (p.complemento ? "\n" + p.complemento : ""))) return;
+      e.disabled = true;
+      try {
+        const resp = await fetch("/rotas/" + encodeURIComponent(id) + "/entregar/" + encodeURIComponent(p.id), {method: "POST", headers: {"X-Codigo": codigo}});
+        if (!resp.ok && resp.status !== 404) throw new Error("falhou");
+      } catch (err) { alert("Não consegui registrar a entrega. Tente de novo."); e.disabled = false; return; }
+      atualizar();
+    };
+    const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(a, b); if (lig) acoes.append(lig); acoes.append(e);
+    li.append(t, acoes); lista.append(li);
+  });
+  const linha = (dados.trajeto && dados.trajeto.length > 1) ? dados.trajeto : pontos;
+  L.polyline(linha, {color: "#2563eb", weight: 5, opacity: 0.8}).addTo(camada);
+  mapa.fitBounds(pontos, {padding: [30, 30]});
+}
+
+let parado = false;
+async function atualizar() {
+  // Com a tela apagada ou outro app na frente, não consulta: economiza bateria e internet.
+  if (parado || document.hidden) return;
+  if (!id) { document.getElementById("msg").textContent = "Digite seu nome e código acima e clique em Ver rota."; return; }
+  try {
+    const resp = await fetch("/rotas/" + encodeURIComponent(id), {headers: {"X-Codigo": codigo}});
+    if (resp.status === 401 || resp.status === 429) {
+      // Para de tentar sozinho: repetir com o código errado bloquearia o celular por excesso de erros.
+      parado = true; ultimo = ""; camada.clearLayers(); document.getElementById("paradas").innerHTML = "";
+      if (resp.status === 401) guardarCodigo(id, "");  // esquece o código errado guardado no celular
+      let txt = "Nome ou código incorretos. Confira e clique em Ver rota.";
+      if (resp.status === 429) { try { txt = (await resp.json()).detail; } catch (e) {} }
+      document.getElementById("msg").textContent = txt; return;
+    }
+    const texto = await resp.text();
+    if (texto !== ultimo) { ultimo = texto; desenhar(JSON.parse(texto)); }
+  } catch (e) { ultimo = ""; document.getElementById("msg").textContent = "Sem conexão com a API."; }
+}
+atualizar(); setInterval(atualizar, 5000);
+// Ao voltar para a página, atualiza na hora em vez de esperar os 5 s.
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { ultimo = ""; atualizar(); } });
+</script>
+</body>
+</html>

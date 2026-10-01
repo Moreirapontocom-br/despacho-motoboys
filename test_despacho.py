@@ -8,11 +8,10 @@ Tudo acontece num banco SQLite temporário: os dados reais do restaurante nunca 
 Os serviços externos (mapa, rotas, busca de endereço) ficam desligados durante os testes.
 """
 
-import importlib.util
 import os
 import sqlite3
 import tempfile
-from pathlib import Path
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -28,11 +27,16 @@ for _v in ("LOCATIONIQ_KEY", "LOCATIONIQ_MAPA_KEY", "RESTAURANTE_LAT", "RESTAURA
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
-import api_despacho3 as sistema  # noqa: E402
+import api_despacho3  # noqa: E402
+import banco  # noqa: E402
+import config  # noqa: E402
+import despacho  # noqa: E402
+import horarios  # noqa: E402
+import seguranca  # noqa: E402
 
 CHAVE = {"X-API-Key": os.environ["API_KEY"]}
 CODIGO = "123456"
-R = sistema.RESTAURANTE
+R = config.RESTAURANTE
 
 
 # ---------------------------------------------------------------------
@@ -41,21 +45,21 @@ R = sistema.RESTAURANTE
 @pytest.fixture(autouse=True)
 def banco_limpo():
     """Cada teste começa com o banco vazio e sem bloqueios de tentativas."""
-    with sistema.engine.begin() as con:
+    with banco.engine.begin() as con:
         con.execute(text("DELETE FROM pedidos"))
         con.execute(text("DELETE FROM motoboys"))
-    sistema._erros.clear()
-    sistema._bloqueado_ate.clear()
+    seguranca._erros.clear()
+    seguranca._bloqueado_ate.clear()
     yield
 
 
 @pytest.fixture
 def api():
-    return TestClient(sistema.app)
+    return TestClient(api_despacho3.app)
 
 
 def sql(consulta, **params):
-    with sistema.engine.begin() as con:
+    with banco.engine.begin() as con:
         return con.execute(text(consulta), params)
 
 
@@ -92,14 +96,14 @@ def test_painel_exige_chave(api):
 
 
 def test_chave_errada_bloqueia_depois_de_varias_tentativas(api):
-    for _ in range(sistema.LIMITE_POR_IP):
+    for _ in range(seguranca.LIMITE_POR_IP):
         api.get("/status", headers={"X-API-Key": "errada"})
     assert api.get("/status", headers={"X-API-Key": "errada"}).status_code == 429
 
 
 def test_ip_inventado_no_x_forwarded_for_nao_escapa_do_bloqueio(api):
     """Um atacante que troca o primeiro IP do X-Forwarded-For a cada tentativa continua sendo contado."""
-    for i in range(sistema.LIMITE_POR_IP):
+    for i in range(seguranca.LIMITE_POR_IP):
         api.get("/status", headers={"X-API-Key": "errada", "X-Forwarded-For": f"1.2.3.{i}, 9.9.9.9"})
     r = api.get("/status", headers={"X-API-Key": "errada", "X-Forwarded-For": "5.5.5.5, 9.9.9.9"})
     assert r.status_code == 429
@@ -135,7 +139,7 @@ def test_codigo_do_motoboy_precisa_de_6_caracteres(api):
 def test_true_client_ip_inventado_nao_escapa_do_bloqueio(api):
     """Fora do plano Enterprise da Cloudflare, o True-Client-IP é escrito pelo próprio
     atacante. Trocar esse valor a cada tentativa não pode zerar a contagem."""
-    for i in range(sistema.LIMITE_POR_IP):
+    for i in range(seguranca.LIMITE_POR_IP):
         api.get("/status", headers={"X-API-Key": "errada", "True-Client-IP": f"1.2.3.{i}"})
     r = api.get("/status", headers={"X-API-Key": "errada", "True-Client-IP": "5.5.5.5"})
     assert r.status_code == 429
@@ -146,7 +150,7 @@ def test_atacante_nao_tranca_o_motoboy_que_ja_esta_usando_a_pagina(api):
     O atacante fica bloqueado, mas o Carlos, que já tinha entrado, continua vendo a rota."""
     novo_motoboy(api, "Carlos")
     assert ver_rota(api, "Carlos").status_code == 200  # Carlos já está com a página aberta
-    for i in range(sistema.LIMITE_POR_MOTOBOY):
+    for i in range(seguranca.LIMITE_POR_MOTOBOY):
         api.get("/rotas/Carlos", headers={"X-Codigo": "chute", "CF-Connecting-IP": f"10.0.0.{i}"})
     atacante = api.get("/rotas/Carlos", headers={"X-Codigo": "chute", "CF-Connecting-IP": "10.0.1.1"})
     assert atacante.status_code == 429
@@ -184,7 +188,7 @@ def test_ids_gerados_pelo_servidor_nao_se_repetem(api):
 
 def test_pedido_parado_na_fila_fica_atrasado(api):
     novo_pedido(api)
-    sql("UPDATE pedidos SET criado_em = datetime('now', :m)", m=f"-{int(sistema.PEDIDO_ATRASO_MIN) + 1} minutes")
+    sql("UPDATE pedidos SET criado_em = datetime('now', :m)", m=f"-{int(config.PEDIDO_ATRASO_MIN) + 1} minutes")
     p = api.get("/pedidos", headers=CHAVE).json()["pedidos"][0]
     assert p["atrasado"] is True
 
@@ -195,7 +199,7 @@ def test_pedido_em_rota_ha_muito_tempo_fica_atrasado(api):
     api.post("/despachar", headers=CHAVE)
     p = api.get("/pedidos", headers=CHAVE).json()["pedidos"][0]
     assert p["status"] == "despachado" and p["atrasado"] is False
-    sql("UPDATE pedidos SET despachado_em = datetime('now', :m)", m=f"-{int(sistema.ROTA_ATRASO_MIN) + 1} minutes")
+    sql("UPDATE pedidos SET despachado_em = datetime('now', :m)", m=f"-{int(config.ROTA_ATRASO_MIN) + 1} minutes")
     p = api.get("/pedidos", headers=CHAVE).json()["pedidos"][0]
     assert p["atrasado"] is True
 
@@ -314,7 +318,7 @@ def test_pedido_entregue_durante_o_despacho_nao_volta_para_a_rota(api, monkeypat
     api.post("/despachar", headers=CHAVE)
     segundo = novo_pedido(api, lat=-19.620, lng=-43.230)["id"]
 
-    original = sistema._montar_rota
+    original = despacho.montar_rota
     ja_entregou = []
 
     def montar_com_entrega_no_meio(viagens):
@@ -323,7 +327,7 @@ def test_pedido_entregue_durante_o_despacho_nao_volta_para_a_rota(api, monkeypat
             assert api.post(f"/rotas/Ana/entregar/{primeiro}", headers={"X-Codigo": CODIGO}).status_code == 200
         return original(viagens)
 
-    monkeypatch.setattr(sistema, "_montar_rota", montar_com_entrega_no_meio)
+    monkeypatch.setattr(despacho, "montar_rota", montar_com_entrega_no_meio)
     api.post("/despachar", headers=CHAVE)
 
     assert ja_entregou
@@ -379,7 +383,7 @@ def test_paginas_abrem(api):
 # ---------------------------------------------------------------------
 def test_banco_antigo_e_atualizado_sem_perder_dados(monkeypatch):
     """Simula o banco de uma versão anterior (sem as colunas novas e com o código do
-    motoboy em texto) e confere que, ao iniciar, o sistema atualiza tudo sozinho."""
+    motoboy em texto) e confere que banco.preparar atualiza tudo sem perder dados."""
     caminho = os.path.join(_PASTA_TEMP, "antigo.db")
     con = sqlite3.connect(caminho)
     con.executescript("""
@@ -395,18 +399,77 @@ def test_banco_antigo_e_atualizado_sem_perder_dados(monkeypatch):
     con.commit()
     con.close()
 
-    monkeypatch.setenv("DATABASE_URL", "sqlite:///" + caminho)
-    arquivo = Path(sistema.__file__)
-    spec = importlib.util.spec_from_file_location("sistema_migrado", arquivo)
-    migrado = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migrado)
+    antigo = banco.criar_engine("sqlite:///" + caminho)
     try:
-        api = TestClient(migrado.app)
-        with migrado.engine.connect() as c:
+        banco.preparar(antigo)
+        banco.preparar(antigo)  # rodar de novo (todo reinício do servidor) não pode dar erro
+        monkeypatch.setattr(banco, "engine", antigo)
+        api = TestClient(api_despacho3.app)
+        with antigo.connect() as c:
             assert c.execute(text("SELECT codigo FROM motoboys")).scalar().startswith("pbkdf2$")
         r = api.get("/rotas/Veterano", headers={"X-Codigo": "codigo-antigo"})
         assert r.status_code == 200                                    # código antigo continua valendo
         assert [p["id"] for p in r.json()["paradas"]] == ["VELHO1"]   # pedido antigo continua lá
         assert r.json()["paradas"][0]["rotulo"] == "VELHO1"           # sem número do dia: mostra o id
+        assert api.get("/motoboys", headers=CHAVE).json()["motoboys"][0]["ativo"]  # coluna nova com o padrão
     finally:
-        migrado.engine.dispose()
+        antigo.dispose()
+
+
+# ---------------------------------------------------------------------
+# Horários e fuso
+# ---------------------------------------------------------------------
+def test_inicio_do_dia_usa_o_horario_do_restaurante():
+    """01/10 às 02:00 em UTC ainda é 30/09 às 23:00 em Itabira (UTC-3).
+    Então "hoje" começou em 30/09 00:00 local = 30/09 03:00 UTC."""
+    agora = datetime(2026, 10, 1, 2, 0)
+    assert horarios.inicio_do_dia_utc(agora) == datetime(2026, 9, 30, 3, 0)
+    assert horarios.inicio_do_dia_utc(agora, dias_atras=6) == datetime(2026, 9, 24, 3, 0)
+    assert horarios.fmt_local(agora) == "30/09/2026 23:00"
+
+
+def test_gps_muito_no_futuro_nao_vale():
+    """Antes, qualquer diferença de fuso passava (o sistema usava o valor absoluto).
+    Agora só uma folga pequena de relógio é aceita."""
+    agora = datetime(2026, 10, 1, 12, 0)
+    assert horarios.gps_recente(agora - timedelta(minutes=2), agora)
+    assert horarios.gps_recente(agora + timedelta(seconds=30), agora)
+    assert not horarios.gps_recente(agora - timedelta(minutes=config.GPS_VALIDADE_MIN + 1), agora)
+    assert not horarios.gps_recente(agora + timedelta(hours=3), agora)   # erro de fuso
+    assert not horarios.gps_recente(None, agora)
+
+
+def test_horario_gravado_pelo_banco_e_utc():
+    agora = horarios.agora_utc()
+    assert agora.tzinfo is None
+    with banco.engine.connect() as c:
+        do_banco = horarios.parse_ts(c.execute(text("SELECT CURRENT_TIMESTAMP")).scalar())
+    assert abs((do_banco - agora).total_seconds()) < 60
+
+
+# ---------------------------------------------------------------------
+# Painel
+# ---------------------------------------------------------------------
+def test_painel_recebe_as_configuracoes(api):
+    html = api.get("/painel").text
+    assert "/*__CONFIG__*/" not in html
+    assert '"cidade": "Itabira, MG"' in html
+    assert f'"pedidoAtrasoMin": {int(config.PEDIDO_ATRASO_MIN)}' in html
+    assert "<\\/a>" in html  # o crédito do mapa não fecha o <script> antes da hora
+
+
+def test_mapa_da_operacao_so_mostra_gps_recente(api):
+    novo_motoboy(api, "ComGps")
+    novo_motoboy(api, "GpsVelho")
+    sql("UPDATE motoboys SET gps_lat = -19.62, gps_lng = -43.22, gps_em = CURRENT_TIMESTAMP WHERE id = 'ComGps'")
+    sql("UPDATE motoboys SET gps_lat = -19.63, gps_lng = -43.23, gps_em = :t WHERE id = 'GpsVelho'",
+        t=horarios.agora_utc() - timedelta(hours=2))
+    motos = {m["id"]: m for m in api.get("/motoboys", headers=CHAVE).json()["motoboys"]}
+    assert motos["ComGps"]["gps_ativo"] and motos["ComGps"]["gps_lat"] == -19.62
+    assert not motos["GpsVelho"]["gps_ativo"] and motos["GpsVelho"]["gps_lat"] is None
+
+
+def test_lista_de_pedidos_traz_a_hora_local(api):
+    novo_pedido(api)
+    sql("UPDATE pedidos SET criado_em = :t", t=datetime(2026, 10, 1, 2, 5))
+    assert api.get("/pedidos", headers=CHAVE).json()["pedidos"][0]["hora"] == "23:05"

@@ -14,10 +14,14 @@ rota no celular, com mapa, navegação pelo Google Maps e botão de "Entregue".
 - Número do pedido no dia (#1, #2...), fácil de falar no balcão e no telefone
 - Despacho automático com um clique, ou atribuição manual a um motoboy
 - Edição e cancelamento de pedidos
-- Destaque para pedidos atrasados (na fila ou em rota)
+- **Mapa da operação** ao lado da lista: pedidos na fila (vermelho), pedidos em rota
+  (na cor de cada motoboy, com a linha da rota) e motoboys com GPS ativo
+- **Alerta de atraso**: faixa vermelha e contador no título da aba quando um pedido
+  passa do tempo na fila ou em rota
 - Botão de WhatsApp para avisar o cliente que o pedido saiu
 - Resumo do dia (pendentes, em rota, entregues, tempo médio) e histórico em CSV
-- Cadastro de motoboys e controle de turno
+- Cadastro de motoboys (com botão para gerar um código seguro) e controle de turno
+- Funciona em computador (até 3 colunas lado a lado), tablet e celular
 
 **Página do motoboy** (`/motoboy?id=NOME#codigo=CODIGO`)
 - Rota do dia no mapa, na ordem certa
@@ -56,6 +60,7 @@ Configure no painel do Render, em **Environment**. **Nunca coloque chaves no có
 | `RESTAURANTE_LAT` / `RESTAURANTE_LNG` | Itabira (MG) | Localização do restaurante |
 | `RESTAURANTE_ENDERECO` | — | Endereço em texto, usado como ponto de partida no Google Maps |
 | `RESTAURANTE_NOME` | — | Aparece na mensagem de WhatsApp para o cliente |
+| `RESTAURANTE_CIDADE` | `Itabira, MG` | Cidade que já vem preenchida no cadastro de pedidos |
 | `TIMEZONE_OFFSET_HORAS` | `-3` | Fuso horário em relação ao UTC |
 
 ### Mapas e rotas
@@ -76,6 +81,24 @@ Configure no painel do Render, em **Environment**. **Nunca coloque chaves no có
 | `SAIDA_MIN` | `5` | Sem GPS, minutos após o despacho para considerar que o motoboy saiu |
 | `MAX_PARADAS_VIAGEM` | `5` | Máximo de entregas numa mesma saída |
 | `GPS_VALIDADE_MIN` | `10` | Por quantos minutos a posição do GPS vale |
+
+## Estrutura do projeto
+
+| Arquivo | O que tem |
+|---|---|
+| `api_despacho3.py` | Ponto de entrada (o Render inicia por aqui). Só junta as partes. |
+| `config.py` | Todas as variáveis de ambiente, num lugar só |
+| `horarios.py` | Horários e fuso. Regra: o banco guarda tudo em UTC |
+| `banco.py` | Conexão, criação das tabelas e atualização de bancos antigos |
+| `seguranca.py` | Chave do painel, códigos dos motoboys, limite de tentativas |
+| `mapas.py` | Busca de endereço, distâncias e rotas pelas ruas |
+| `despacho.py` | O algoritmo: agrupar pedidos, escolher motoboy, ordenar paradas |
+| `api_painel.py` | Endereços usados pelo painel do restaurante |
+| `api_motoboy.py` | Endereços usados pela página do motoboy |
+| `paginas.py` | Carrega as páginas HTML com as configurações |
+| `painel.html` | Página do restaurante |
+| `motoboy.html` | Página do motoboy |
+| `test_despacho.py` | Testes automáticos |
 
 ## Publicar no Render
 

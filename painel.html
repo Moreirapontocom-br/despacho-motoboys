@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="pt-BR" translate="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="google" content="notranslate">
+<title>Painel do restaurante</title>
+<!-- integrity: se o arquivo do CDN for alterado por alguém, o navegador se recusa a usá-lo
+     (protege a API_KEY guardada na página). Hashes oficiais do Leaflet 1.9.4. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+ :root{
+  --fundo:#f1f3f6; --cartao:#fff; --texto:#1f2937; --suave:#6b7280; --borda:#e5e7eb;
+  --azul:#2563eb; --verde:#059669; --vermelho:#dc2626; --vermelho-claro:#fef2f2; --amarelo:#fef3c7;
+  --escuro:#111827; --raio:10px;
+ }
+ *{box-sizing:border-box}
+ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:var(--fundo);color:var(--texto);font-size:15px}
+ input,select,button{font:inherit}
+ input,select{padding:8px;border-radius:6px;border:1px solid #cfd4dc;background:#fff;color:var(--texto);min-width:0}
+ button{padding:8px 14px;border:0;border-radius:6px;background:var(--azul);color:#fff;cursor:pointer;white-space:nowrap}
+ button:disabled{opacity:.5;cursor:default}
+ button.verde{background:var(--verde)} button.cinza{background:#6b7280} button.perigo{background:#b91c1c}
+ button.claro{background:#e5e7eb;color:var(--texto)}
+ button.on{background:var(--verde)} button.off{background:#9ca3af}
+ button.mini{padding:4px 9px;font-size:.85rem}
+
+ /* Cabeçalho */
+ header{position:sticky;top:0;z-index:1000;background:var(--escuro);color:#fff;padding:10px 16px;
+        display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+ header h1{font-size:1.05rem;margin:0 8px 0 0;font-weight:700}
+ header .espaco{flex:1}
+ #login{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+ #login input{width:230px;border:0}
+ #relogio{font-variant-numeric:tabular-nums;color:#d1d5db}
+
+ /* Faixa de resumo + despacho */
+ .faixa{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;padding:12px 16px 0}
+ .cartoes{display:grid;grid-template-columns:repeat(auto-fit,minmax(84px,1fr));gap:8px;flex:1 1 420px;min-width:0}
+ .cartao{background:var(--cartao);border-radius:var(--raio);padding:8px 10px;text-align:center;border:1px solid var(--borda)}
+ .cartao .num{font-size:1.5rem;font-weight:700;font-variant-numeric:tabular-nums}
+ .cartao .rot{font-size:.78rem;color:var(--suave)}
+ .cartao.alerta{background:var(--vermelho-claro);border-color:#fecaca;color:var(--vermelho)}
+ #despachar{font-size:1.1rem;font-weight:700;padding:12px 22px;background:var(--verde);border-radius:var(--raio);flex:1 1 200px;max-width:100%}
+ @media (min-width:900px){ #despachar{flex:0 0 auto} }
+ #msgDespacho{padding:6px 16px 0;min-height:1em}
+
+ /* Grade principal: lado a lado em telas grandes */
+ .grade{display:grid;gap:12px;padding:12px 16px 24px;align-items:start;
+        grid-template-columns:minmax(0,1fr);grid-template-areas:"form" "fila" "mapa" "motos"}
+ @media (min-width:900px){
+  .grade{grid-template-columns:minmax(330px,380px) minmax(0,1fr);grid-template-areas:"form mapa" "motos fila"}
+ }
+ @media (min-width:1280px){
+  .grade{grid-template-columns:minmax(340px,380px) minmax(380px,1fr) minmax(380px,1fr);
+         grid-template-areas:"form fila mapa" "motos fila mapa";grid-template-rows:auto 1fr}
+  #colMapa{position:sticky;top:64px}
+ }
+ #colForm{grid-area:form} #colMotos{grid-area:motos} #colFila{grid-area:fila} #colMapa{grid-area:mapa}
+ section{background:var(--cartao);border-radius:var(--raio);padding:14px;margin-bottom:12px;border:1px solid var(--borda)}
+ section:last-child{margin-bottom:0}
+ h2{margin:0 0 10px;font-size:1rem;display:flex;align-items:center;gap:8px}
+ h2 .contador{background:#e5e7eb;border-radius:10px;padding:1px 9px;font-size:.8rem;font-weight:600}
+ .linha{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+ .linha input{flex:1;min-width:120px}
+ .linha input[type=checkbox]{flex:none;min-width:0;width:auto}
+ .ajuda{font-size:.82rem;color:var(--suave);margin-bottom:6px}
+ .ok{color:#047857} .erro{color:#b91c1c}
+ ul{list-style:none;margin:0;padding:0}
+ .sn{display:flex;align-items:center;gap:4px;font-size:.9rem;white-space:nowrap}
+ .aviso-edicao{background:var(--amarelo);color:#92400e;padding:8px;border-radius:6px;margin-bottom:8px;font-weight:600}
+ #candidatos li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--borda)}
+ #mapaConfirma{height:300px;border-radius:8px;margin:8px 0}
+ .pino{width:22px;height:22px;border-radius:50%;background:var(--vermelho);border:3px solid #fff;box-shadow:0 0 4px #000}
+
+ /* Pedidos */
+ #alertaAtraso{display:none;background:var(--vermelho);color:#fff;font-weight:700;padding:10px 12px;border-radius:8px;margin-bottom:10px}
+ .grupo{font-size:.8rem;font-weight:700;color:var(--suave);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 6px;display:flex;align-items:center;gap:6px}
+ .grupo:first-child{margin-top:0}
+ .pedido{border:1px solid var(--borda);border-left:5px solid #cbd5e1;border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#fff}
+ .pedido.pendente{border-left-color:var(--vermelho)}
+ .pedido.atrasado{background:var(--vermelho-claro);border-color:#fecaca;border-left-color:var(--vermelho)}
+ .pedido .topo{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+ .rotulo{font-weight:800;font-size:1.05rem;background:none;color:var(--texto);padding:0;border-radius:0}
+ .rotulo:hover{text-decoration:underline}
+ .hora{color:var(--suave);font-size:.85rem}
+ .tag{font-size:.78rem;padding:2px 8px;border-radius:10px;background:#e5e7eb;white-space:nowrap;margin-left:auto}
+ .tag.atrasado{background:var(--vermelho);color:#fff;font-weight:700}
+ .endereco{margin:2px 0}
+ .extra{font-size:.85rem;color:#555}
+ .acoes{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center}
+ .acoes select{padding:5px;max-width:140px}
+ a.zap{padding:4px 9px;border-radius:6px;background:#16a34a;color:#fff;text-decoration:none;font-size:.85rem}
+ .bolinha{display:inline-block;width:10px;height:10px;border-radius:50%;flex-shrink:0}
+ .vazio{color:var(--suave);padding:6px 0}
+
+ /* Mapa da operação */
+ #mapaOp{height:calc(100vh - 230px);min-height:340px;border-radius:8px}
+ @media (max-width:1279px){ #mapaOp{height:420px} }
+ .legenda{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:.82rem;color:var(--suave);align-items:center}
+ .legenda span{display:flex;align-items:center;gap:4px}
+ .pin{min-width:26px;height:26px;padding:0 5px;border-radius:13px;color:#fff;font-weight:700;font-size:12px;
+      display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45)}
+ .pin.rest{background:var(--verde);border-radius:6px}
+ .pin.pend{background:var(--vermelho)}
+ .pin.atrasado{animation:pisca 1s infinite}
+ .pin.moto{border-radius:6px;font-size:13px;box-shadow:0 0 0 3px rgba(255,255,255,.7),0 1px 6px rgba(0,0,0,.5)}
+ @keyframes pisca{50%{transform:scale(1.25);box-shadow:0 0 0 6px rgba(220,38,38,.35)}}
+
+ /* Motoboys */
+ #listaMoto li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--borda);flex-wrap:wrap}
+ #listaMoto li:first-child{border-top:0}
+ .nomeMoto{display:flex;align-items:center;gap:6px;font-weight:600}
+ .detalheMoto{font-size:.82rem;color:var(--suave);font-weight:400}
+ .gps{font-size:.75rem;background:#d1fae5;color:#065f46;padding:1px 6px;border-radius:8px;font-weight:600}
+ #msgMoto{word-break:break-all}
+</style>
+</head>
+<body>
+<header>
+ <h1>Painel do restaurante</h1>
+ <div id="login">
+  <input id="chave" type="password" placeholder="cole a chave do restaurante (API_KEY)" autocomplete="current-password">
+  <button id="salvar">Entrar</button>
+ </div>
+ <span class="espaco"></span>
+ <span id="relogio"></span>
+</header>
+
+<div class="faixa">
+ <div class="cartoes">
+  <div class="cartao"><div class="num" id="rPendentes">—</div><div class="rot">Na fila</div></div>
+  <div class="cartao"><div class="num" id="rEmRota">—</div><div class="rot">Em rota</div></div>
+  <div class="cartao" id="cAtrasados"><div class="num" id="rAtrasados">—</div><div class="rot">Atrasados</div></div>
+  <div class="cartao"><div class="num" id="rEntregues">—</div><div class="rot">Entregues hoje</div></div>
+  <div class="cartao"><div class="num" id="rTempo">—</div><div class="rot">Tempo médio</div></div>
+ </div>
+ <button id="despachar">Despachar agora</button>
+</div>
+<div id="msgDespacho"></div>
+
+<main class="grade">
+ <div id="colForm">
+  <section>
+   <h2 id="tituloPedido">Novo pedido</h2>
+   <div id="avisoEdicao" class="aviso-edicao" style="display:none"></div>
+   <div class="linha">
+    <input id="rua" placeholder="Rua * (ex.: Rua São Paulo)" style="flex:3">
+    <input id="numero" placeholder="Nº *" style="flex:1;min-width:70px">
+    <label class="sn"><input type="checkbox" id="semNumero"> S/N</label>
+   </div>
+   <div class="linha">
+    <input id="bairro" list="listaBairros" placeholder="Bairro *" autocomplete="off">
+    <datalist id="listaBairros"></datalist>
+    <input id="cep" placeholder="CEP" inputmode="numeric" maxlength="9" style="flex:0 1 110px">
+   </div>
+   <div class="linha"><input id="complemento" placeholder="Complemento (apto 201, bloco B...)"></div>
+   <div class="linha"><input id="referencia" placeholder="Ponto de referência"></div>
+   <div class="linha"><input id="telefone" placeholder="Telefone do cliente ex.: (31) 99999-9999" inputmode="tel" maxlength="16"></div>
+   <div class="linha">
+    <input id="cidade" style="min-width:100px" title="Cidade, UF">
+    <button id="buscar">Buscar endereço</button>
+    <button id="limpar" class="claro">Limpar</button>
+   </div>
+   <div class="ajuda">* obrigatório. Complemento e referência não entram na busca; só aparecem para o motoboy.</div>
+   <div id="msgBusca"></div>
+   <ul id="candidatos"></ul>
+   <div id="confirmacao" style="display:none">
+    <strong>Confirme o ponto:</strong> arraste o pino até a porta do cliente (ou clique no mapa).
+    <div id="mapaConfirma"></div>
+    <div class="linha">
+     <button id="confirmar" class="verde">Confirmar pedido neste ponto</button>
+     <button id="cancelar" class="cinza">Cancelar</button>
+    </div>
+   </div>
+  </section>
+ </div>
+
+ <div id="colMotos">
+  <section>
+   <h2>Motoboys <span class="contador" id="contMoto">0</span></h2>
+   <ul id="listaMoto"></ul>
+   <div class="linha" style="margin-top:10px">
+    <input id="motoNome" placeholder="Nome (ex.: Carlos)">
+   </div>
+   <div class="linha">
+    <input id="motoCodigo" placeholder="Código (mínimo 6)">
+    <button id="gerarCodigo" class="claro" title="Cria um código aleatório e difícil de adivinhar">Gerar</button>
+    <button id="salvarMoto">Salvar</button>
+   </div>
+   <div class="ajuda">Nome já existente: o código dele é trocado. Maiúsculas e minúsculas contam. Motoboy novo entra "De turno".</div>
+   <div id="msgMoto"></div>
+  </section>
+
+  <section>
+   <h2>Histórico</h2>
+   <div class="linha" style="align-items:center">
+    <span class="ajuda" style="margin:0">Últimos</span>
+    <input id="diasHistorico" type="number" min="1" max="365" value="30" style="flex:0 0 70px">
+    <span class="ajuda" style="margin:0">dia(s)</span>
+    <button id="baixarHistorico" class="cinza">Baixar CSV</button>
+   </div>
+   <div id="msgHistorico"></div>
+  </section>
+ </div>
+
+ <div id="colFila">
+  <section>
+   <h2>Pedidos</h2>
+   <div id="alertaAtraso"></div>
+   <div id="fila"><div class="vazio">Digite a chave do restaurante no topo e clique em Entrar.</div></div>
+  </section>
+ </div>
+
+ <div id="colMapa">
+  <section>
+   <h2>Mapa da operação <span class="espaco" style="flex:1"></span><button id="centralizar" class="claro mini">Centralizar</button></h2>
+   <div id="mapaOp"></div>
+   <div class="legenda" id="legenda"></div>
+  </section>
+ </div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+/*__CONFIG__*/
+const $ = (i) => document.getElementById(i);
+const el = (tag, props, ...filhos) => { const e = Object.assign(document.createElement(tag), props || {}); e.append(...filhos); return e; };
+function guardar(chave, valor) { try { valor === null ? localStorage.removeItem(chave) : localStorage.setItem(chave, valor); } catch (e) {} }
+function ler(chave) { try { return localStorage.getItem(chave); } catch (e) { return null; } }
+
+let chave = "";
+try { chave = sessionStorage.getItem("chave") || ""; } catch (e) {}
+$("chave").value = chave;
+$("cidade").value = CONFIG.cidade;
+
+async function api(caminho, metodo, corpo) {
+  const resp = await fetch(caminho, {
+    method: metodo || "GET",
+    headers: {"X-API-Key": chave, "Content-Type": "application/json"},
+    body: corpo ? JSON.stringify(corpo) : undefined
+  });
+  if (resp.status === 401) {
+    // Para de consultar sozinho com a chave errada (senão o servidor bloqueia o computador por excesso de erros).
+    chave = ""; try { sessionStorage.removeItem("chave"); } catch (e) {}
+    throw new Error("Chave incorreta. Digite de novo e clique em Entrar.");
+  }
+  if (resp.status === 429) { chave = ""; }
+  if (!resp.ok) { let d = ""; try { d = (await resp.json()).detail; } catch (e) {} throw new Error(d || "Erro " + resp.status); }
+  return resp.json();
+}
+
+function dizer(alvo, texto, classe) { alvo.textContent = texto; alvo.className = classe || ""; }
+
+$("salvar").onclick = () => {
+  chave = $("chave").value.trim();
+  try { sessionStorage.setItem("chave", chave); } catch (e) {}
+  atualizarTudo(); carregarBairros();
+};
+$("chave").onkeydown = (e) => { if (e.key === "Enter") $("salvar").click(); };
+
+// Relógio no cabeçalho (horário do computador do restaurante).
+function relogio() { $("relogio").textContent = new Date().toLocaleTimeString("pt-BR", {hour: "2-digit", minute: "2-digit"}); }
+relogio(); setInterval(relogio, 15000);
+
+// ---------------------------------------------------------------------
+// Formulário de pedido
+// ---------------------------------------------------------------------
+$("semNumero").onchange = () => {
+  const sn = $("semNumero").checked;
+  $("numero").disabled = sn;
+  if (sn) $("numero").value = "";
+};
+$("telefone").oninput = () => {
+  const d = $("telefone").value.replace(/\D/g, "").slice(0, 11);
+  let t = d;
+  if (d.length > 2) t = "(" + d.slice(0, 2) + ") " + d.slice(2);
+  if (d.length > 6) t = "(" + d.slice(0, 2) + ") " + d.slice(2, d.length - 4) + "-" + d.slice(d.length - 4);
+  $("telefone").value = t;
+};
+$("cep").oninput = () => {
+  const d = $("cep").value.replace(/\D/g, "").slice(0, 8);
+  $("cep").value = d.length > 5 ? d.slice(0, 5) + "-" + d.slice(5) : d;
+};
+
+// Lê os campos do formulário. Devolve {erro: "..."} se faltar algo obrigatório.
+function lerEndereco() {
+  const v = (i) => $(i).value.trim().replace(/\s+/g, " ");
+  const e = {rua: v("rua"), numero: $("semNumero").checked ? "S/N" : v("numero"), bairro: v("bairro"),
+             complemento: v("complemento"), referencia: v("referencia"), cep: v("cep"), telefone: v("telefone")};
+  const partesCidade = v("cidade").split(",");
+  e.cidade = (partesCidade[0] || "").trim();
+  e.estado = (partesCidade[1] || "").trim();
+  if (e.rua.length < 3) return {erro: "Digite o nome da rua."};
+  if (!e.numero) return {erro: "Digite o número (ou marque \"S/N\")."};
+  if (e.bairro.length < 2) return {erro: "Digite o bairro."};
+  if (e.cep && e.cep.replace(/\D/g, "").length !== 8) return {erro: "CEP incompleto (8 números). Pode deixar vazio."};
+  const digitosTel = e.telefone.replace(/\D/g, "").length;
+  if (e.telefone && (digitosTel < 10 || digitosTel > 11)) return {erro: "Telefone incompleto: use DDD + número, ex.: (31) 99999-9999. Pode deixar vazio."};
+  // Endereço numa linha, no formato que o Google Maps entende bem. Sem complemento/referência.
+  const cidadeUf = e.cidade + (e.estado ? " - " + e.estado : "");
+  e.endereco = e.rua + (e.numero !== "S/N" ? ", " + e.numero : "") + " - " + e.bairro + ", " + cidadeUf + (e.cep ? ", " + e.cep : "");
+  return e;
+}
+
+let editandoId = null, editandoRotulo = "";  // pedido sendo corrigido, ou null quando é pedido novo
+
+function limparFormulario() {
+  ["rua", "numero", "bairro", "complemento", "referencia", "cep", "telefone"].forEach((i) => $(i).value = "");
+  $("semNumero").checked = false; $("numero").disabled = false;
+  editandoId = null;
+  $("tituloPedido").textContent = "Novo pedido";
+  $("avisoEdicao").style.display = "none";
+  $("confirmar").textContent = "Confirmar pedido neste ponto";
+}
+
+// Coloca um pedido da fila no formulário para corrigir, já com o mapa no ponto salvo.
+function editarPedido(p) {
+  limparFormulario();
+  editandoId = p.id; editandoRotulo = p.rotulo || p.id;
+  $("rua").value = p.rua || p.endereco;  // pedidos antigos só têm o endereço numa linha
+  if (p.numero === "S/N") { $("semNumero").checked = true; $("numero").disabled = true; }
+  else $("numero").value = p.numero || "";
+  $("bairro").value = p.bairro || "";
+  $("complemento").value = p.complemento || "";
+  $("referencia").value = p.referencia || "";
+  $("cep").value = p.cep || "";
+  $("telefone").value = p.telefone || "";
+  $("tituloPedido").textContent = "Corrigindo pedido " + editandoRotulo;
+  $("avisoEdicao").textContent = "Mudou a rua ou o número? Clique em Buscar endereço. Senão, confira o pino e clique em Salvar alterações.";
+  $("avisoEdicao").style.display = "block";
+  $("confirmar").textContent = "Salvar alterações";
+  $("candidatos").innerHTML = ""; dizer($("msgBusca"), "");
+  mostrarConfirmacao({lat: p.lat, lng: p.lng});
+  $("tituloPedido").scrollIntoView({behavior: "smooth"});
+}
+$("limpar").onclick = () => { limparFormulario(); $("candidatos").innerHTML = ""; $("confirmacao").style.display = "none"; dizer($("msgBusca"), ""); };
+
+$("buscar").onclick = async () => {
+  const e = lerEndereco();
+  if (e.erro) { dizer($("msgBusca"), e.erro, "erro"); return; }
+  $("candidatos").innerHTML = "";
+  dizer($("msgBusca"), "Buscando...");
+  try {
+    const r = await api("/geocodificar", "POST", {
+      endereco: e.rua + (e.numero !== "S/N" ? ", " + e.numero : "") + ", " + e.bairro + ", " + e.cidade + (e.estado ? ", " + e.estado : ""),
+      rua: e.rua, numero: e.numero, cidade: e.cidade, estado: e.estado, cep: e.cep || null});
+    if (!r.resultados.length) { dizer($("msgBusca"), r.aviso || "Não achei o endereço. Clique no mapa no ponto certo.", "erro"); mostrarConfirmacao(r.centro); return; }
+    dizer($("msgBusca"), "Clique no endereço correto:");
+    r.resultados.forEach((c) => {
+      const b = el("button", {textContent: "Usar este", className: "mini", onclick: () => mostrarConfirmacao(c)});
+      $("candidatos").append(el("li", {}, el("span", {textContent: c.rotulo}), b));
+    });
+  } catch (err) { dizer($("msgBusca"), err.message, "erro"); }
+};
+
+let mapaC = null, pino = null;
+function mostrarConfirmacao(c) {
+  $("confirmacao").style.display = "block";
+  if (!mapaC) {
+    mapaC = L.map("mapaConfirma");
+    L.tileLayer(CONFIG.mapaUrl, {maxZoom: 19, subdomains: "abc", attribution: CONFIG.mapaCredito}).addTo(mapaC);
+    pino = L.marker([c.lat, c.lng], {draggable: true, icon: L.divIcon({className: "", html: '<div class="pino"></div>', iconSize: [22, 22]})}).addTo(mapaC);
+    mapaC.on("click", (e) => pino.setLatLng(e.latlng));
+  }
+  mapaC.invalidateSize();
+  mapaC.setView([c.lat, c.lng], 18);
+  pino.setLatLng([c.lat, c.lng]);
+  $("confirmacao").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+
+$("cancelar").onclick = () => { $("confirmacao").style.display = "none"; if (editandoId) { limparFormulario(); dizer($("msgBusca"), "Correção cancelada."); } };
+
+$("confirmar").onclick = async () => {
+  // Lê os campos de novo: se a pessoa corrigiu o complemento depois de buscar, vale o corrigido.
+  const e = lerEndereco();
+  if (e.erro) { dizer($("msgBusca"), e.erro, "erro"); return; }
+  const ponto = pino.getLatLng();
+  $("confirmar").disabled = true;
+  const corpo = {endereco: e.endereco, lat: ponto.lat, lng: ponto.lng, rua: e.rua, numero: e.numero, bairro: e.bairro,
+                 complemento: e.complemento, referencia: e.referencia, cep: e.cep, telefone: e.telefone};
+  try {
+    if (editandoId) {
+      await api("/pedidos/" + encodeURIComponent(editandoId), "PUT", corpo);
+      dizer($("msgBusca"), "Pedido " + editandoRotulo + " corrigido.", "ok");
+    } else {
+      const r = await api("/pedidos", "POST", corpo);  // o número do pedido é gerado pelo servidor
+      dizer($("msgBusca"), "Pedido " + (r.rotulo || r.id) + " criado.", "ok");
+    }
+    $("candidatos").innerHTML = ""; limparFormulario(); $("confirmacao").style.display = "none";
+    carregarFila(); carregarResumo(); carregarBairros();
+  } catch (err) { dizer($("msgBusca"), err.message, "erro"); }
+  $("confirmar").disabled = false;
+};
+
+// ---------------------------------------------------------------------
+// Cores dos motoboys (as mesmas na lista de pedidos, na lista de motoboys e no mapa)
+// ---------------------------------------------------------------------
+const PALETA = ["#2563eb", "#9333ea", "#ea580c", "#0891b2", "#db2777", "#65a30d", "#ca8a04", "#4f46e5", "#0f766e", "#7c2d12"];
+let listaMotoboys = [];
+function corDe(id) {
+  const i = listaMotoboys.findIndex((m) => m.id === id);
+  return i < 0 ? "#6b7280" : PALETA[i % PALETA.length];
+}
+
+// ---------------------------------------------------------------------
+// Pedidos (fila e em rota)
+// A atualização automática só redesenha se algo mudou, e espera enquanto alguém
+// está com o seletor de motoboy aberto (senão apagaria a escolha antes do clique).
+// ---------------------------------------------------------------------
+let ultimaFila = "", restauranteNome = "", pedidosAtuais = [];
+const escolhas = {};               // pedido -> motoboy escolhido no seletor (sobrevive às atualizações)
+
+function cartaoPedido(p) {
+  const pendente = p.status === "pendente";
+  const caixa = el("div", {className: "pedido" + (pendente ? " pendente" : "") + (p.atrasado ? " atrasado" : "")});
+  if (!pendente) caixa.style.borderLeftColor = corDe(p.motoboy_id);
+
+  const tag = el("span", {className: "tag" + (p.atrasado ? " atrasado" : "")});
+  if (pendente) tag.textContent = p.atrasado ? "esperando há " + p.minutos + " min" : "na fila há " + (p.minutos || 0) + " min";
+  else tag.textContent = "parada " + p.ordem + (p.atrasado ? " · em rota há " + p.minutos + " min" : "");
+  const rot = el("button", {className: "rotulo", textContent: p.rotulo, title: "Ver no mapa", onclick: () => focarNoMapa(p.id)});
+  caixa.append(el("div", {className: "topo"}, rot, el("span", {className: "hora", textContent: p.hora ? "feito às " + p.hora : ""}), tag));
+  caixa.append(el("div", {className: "endereco", textContent: p.endereco}));
+  const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : "", p.telefone ? "Tel.: " + p.telefone : ""].filter(Boolean).join(" · ");
+  if (extras) caixa.append(el("div", {className: "extra", textContent: extras}));
+
+  const acoes = el("div", {className: "acoes"});
+  if (pendente) {
+    acoes.append(el("button", {textContent: "Editar", className: "claro mini", onclick: () => editarPedido(p)}));
+    if (listaMotoboys.length) {
+      const sel = el("select", {title: "Escolha o motoboy"});
+      listaMotoboys.forEach((m) => sel.append(el("option", {value: m.id, textContent: m.id + (m.ativo ? "" : " (fora)")})));
+      if (listaMotoboys.some((m) => m.id === escolhas[p.id])) sel.value = escolhas[p.id];
+      sel.onchange = () => { escolhas[p.id] = sel.value; };
+      const bt = el("button", {textContent: "Atribuir", className: "mini"});
+      bt.onclick = async () => {
+        bt.disabled = true;
+        try {
+          const r2 = await api("/pedidos/" + encodeURIComponent(p.id) + "/atribuir", "POST", {motoboy_id: sel.value});
+          dizer($("msgDespacho"), p.rotulo + " → " + sel.value + ". " + r2.mensagem, "ok"); atualizarTudo();
+        } catch (err) { dizer($("msgDespacho"), err.message, "erro"); bt.disabled = false; }
+      };
+      acoes.append(sel, bt);
+    }
+  } else {
+    // WhatsApp para o cliente: abre a conversa com a mensagem pronta; é só conferir e enviar.
+    const digitos = (p.telefone || "").replace(/\D/g, "");
+    if (digitos.length >= 10) {
+      const texto = (restauranteNome ? restauranteNome + " informa: " : "Olá! ") +
+        "seu pedido " + p.rotulo + " saiu para entrega com " + p.motoboy_id + " e deve chegar em breve.";
+      acoes.append(el("a", {textContent: "WhatsApp", className: "zap", target: "_blank", rel: "noopener",
+                            href: "https://wa.me/55" + digitos + "?text=" + encodeURIComponent(texto)}));
+    }
+  }
+  const cx = el("button", {textContent: "Cancelar pedido", className: "perigo mini"});
+  cx.onclick = async () => {
+    const emRota = p.status === "despachado";
+    if (!confirm("Cancelar o pedido " + p.rotulo + "?\n" + p.endereco + (emRota ? "\n\nEle já está com " + p.motoboy_id + ": a parada sai da rota dele." : ""))) return;
+    cx.disabled = true;
+    try {
+      const r2 = await api("/pedidos/" + encodeURIComponent(p.id) + "/cancelar", "POST");
+      dizer($("msgDespacho"), r2.mensagem, "ok");
+      if (editandoId === p.id) { limparFormulario(); $("confirmacao").style.display = "none"; }
+      atualizarTudo();
+    } catch (err) { dizer($("msgDespacho"), err.message, "erro"); cx.disabled = false; }
+  };
+  acoes.append(cx);
+  caixa.append(acoes);
+  return caixa;
+}
+
+async function carregarFila(automatico) {
+  if (!chave) return;
+  try {
+    const r = await api("/pedidos");
+    restauranteNome = r.restaurante_nome || "";
+    pedidosAtuais = r.pedidos;
+    avisarAtrasos(r.pedidos);
+    desenharMapa();
+    const foco = document.activeElement;
+    if (automatico && foco && foco.tagName === "SELECT" && $("fila").contains(foco)) return;
+    const assinatura = JSON.stringify([r.pedidos, listaMotoboys.map((m) => [m.id, m.ativo])]);
+    if (automatico && assinatura === ultimaFila) return;
+    ultimaFila = assinatura;
+
+    const fila = $("fila"); fila.innerHTML = "";
+    const pendentes = r.pedidos.filter((p) => p.status === "pendente");
+    const emRota = r.pedidos.filter((p) => p.status !== "pendente");
+
+    fila.append(el("div", {className: "grupo", textContent: "Na fila (" + pendentes.length + ")"}));
+    if (!pendentes.length) fila.append(el("div", {className: "vazio", textContent: "Nenhum pedido esperando."}));
+    // Os mais atrasados primeiro.
+    pendentes.sort((a, b) => (b.minutos || 0) - (a.minutos || 0)).forEach((p) => fila.append(cartaoPedido(p)));
+
+    // Em rota: agrupado por motoboy, na ordem das paradas.
+    const porMoto = {};
+    emRota.forEach((p) => (porMoto[p.motoboy_id] = porMoto[p.motoboy_id] || []).push(p));
+    Object.keys(porMoto).sort().forEach((m) => {
+      const titulo = el("div", {className: "grupo"}, el("span", {className: "bolinha", style: "background:" + corDe(m)}),
+                        document.createTextNode(m + " — em rota (" + porMoto[m].length + ")"));
+      fila.append(titulo);
+      porMoto[m].sort((a, b) => (a.ordem || 0) - (b.ordem || 0)).forEach((p) => fila.append(cartaoPedido(p)));
+    });
+  } catch (err) { dizer($("msgDespacho"), err.message, "erro"); }
+}
+
+// Alerta de atraso: faixa vermelha, cartão "Atrasados" e contador no título da aba.
+function avisarAtrasos(pedidos) {
+  const atrasados = pedidos.filter((p) => p.atrasado);
+  const naFila = atrasados.filter((p) => p.status === "pendente").length;
+  const emRota = atrasados.length - naFila;
+  const avisos = [];
+  if (naFila) avisos.push(naFila + " pedido(s) esperando há mais de " + CONFIG.pedidoAtrasoMin + " min sem despachar");
+  if (emRota) avisos.push(emRota + " pedido(s) em rota há mais de " + CONFIG.rotaAtrasoMin + " min sem entregar");
+  const faixa = $("alertaAtraso");
+  faixa.style.display = avisos.length ? "block" : "none";
+  faixa.textContent = avisos.length ? "⚠ " + avisos.join(" · ") + "." : "";
+  $("rAtrasados").textContent = atrasados.length;
+  $("cAtrasados").classList.toggle("alerta", atrasados.length > 0);
+  document.title = atrasados.length ? "(" + atrasados.length + ") ⚠ Atrasados — Painel" : "Painel do restaurante";
+
+}
+
+$("despachar").onclick = async () => {
+  $("despachar").disabled = true;
+  dizer($("msgDespacho"), "Despachando...");
+  try {
+    const r = await api("/despachar", "POST");
+    if (r.mensagem) { dizer($("msgDespacho"), r.mensagem, "erro"); }
+    else {
+      const partes = Object.entries(r.rotas).map(([m, l]) => m + ": " + l.map((p) => p.num ? "#" + p.num : p.id).join(", "));
+      dizer($("msgDespacho"), "Despachado! " + partes.join(" | "), "ok");
+    }
+    atualizarTudo();
+  } catch (err) { dizer($("msgDespacho"), err.message, "erro"); }
+  $("despachar").disabled = false;
+};
+
+// ---------------------------------------------------------------------
+// Mapa da operação: restaurante, pedidos na fila (vermelho), pedidos em rota
+// (na cor do motoboy, com a linha da rota) e motoboys com GPS ativo.
+// ---------------------------------------------------------------------
+let mapaOp = null, camadaOp = null, ultimoMapa = "", jaEnquadrou = false;
+const marcadores = {};
+function iniciarMapa() {
+  if (mapaOp) return;
+  mapaOp = L.map("mapaOp").setView([CONFIG.restaurante.lat, CONFIG.restaurante.lng], 14);
+  L.tileLayer(CONFIG.mapaUrl, {maxZoom: 19, subdomains: "abc", attribution: CONFIG.mapaCredito}).addTo(mapaOp);
+  camadaOp = L.layerGroup().addTo(mapaOp);
+  window.addEventListener("resize", () => mapaOp.invalidateSize());
+}
+function pinHtml(texto, classe, cor) {
+  const d = el("div", {className: "pin " + classe, textContent: texto});
+  if (cor) d.style.background = cor;
+  return d.outerHTML;
+}
+function desenharMapa() {
+  iniciarMapa();
+  const assinatura = JSON.stringify([pedidosAtuais.map((p) => [p.id, p.lat, p.lng, p.status, p.motoboy_id, p.ordem, p.atrasado]),
+                                     listaMotoboys.map((m) => [m.id, m.gps_lat, m.gps_lng])]);
+  if (assinatura === ultimoMapa) return;
+  ultimoMapa = assinatura;
+  camadaOp.clearLayers();
+  Object.keys(marcadores).forEach((k) => delete marcadores[k]);
+
+  const r = CONFIG.restaurante, pontos = [[r.lat, r.lng]];
+  L.marker([r.lat, r.lng], {icon: L.divIcon({className: "", html: pinHtml("R", "rest"), iconSize: [26, 26]}), zIndexOffset: 500})
+    .bindPopup("Restaurante").addTo(camadaOp);
+
+  // Linhas das rotas, uma por motoboy, na ordem das paradas.
+  const rotas = {};
+  pedidosAtuais.filter((p) => p.status === "despachado").forEach((p) => (rotas[p.motoboy_id] = rotas[p.motoboy_id] || []).push(p));
+  Object.entries(rotas).forEach(([m, ps]) => {
+    ps.sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+    L.polyline([[r.lat, r.lng], ...ps.map((p) => [p.lat, p.lng])], {color: corDe(m), weight: 3, opacity: .7, dashArray: "6 6"}).addTo(camadaOp);
+  });
+
+  pedidosAtuais.forEach((p) => {
+    const pendente = p.status === "pendente";
+    const texto = p.num ? String(p.num) : "•";
+    const html = pinHtml(texto, (pendente ? "pend" : "") + (p.atrasado ? " atrasado" : ""), pendente ? null : corDe(p.motoboy_id));
+    const popup = el("div", {}, el("strong", {textContent: p.rotulo}), el("br"), document.createTextNode(p.endereco), el("br"),
+                     el("span", {textContent: pendente ? "Na fila há " + (p.minutos || 0) + " min" : p.motoboy_id + " · parada " + p.ordem}));
+    const mk = L.marker([p.lat, p.lng], {icon: L.divIcon({className: "", html: html, iconSize: [26, 26]}),
+                                          zIndexOffset: pendente ? 300 : 100}).bindPopup(popup).addTo(camadaOp);
+    marcadores[p.id] = mk;
+    pontos.push([p.lat, p.lng]);
+  });
+
+  listaMotoboys.filter((m) => m.gps_ativo).forEach((m) => {
+    L.marker([m.gps_lat, m.gps_lng], {icon: L.divIcon({className: "", html: pinHtml(m.id.slice(0, 2).toUpperCase(), "moto", corDe(m.id)), iconSize: [28, 28]}),
+                                      zIndexOffset: 400}).bindPopup(el("strong", {textContent: m.id + " (GPS)"})).addTo(camadaOp);
+    pontos.push([m.gps_lat, m.gps_lng]);
+  });
+
+  // Enquadra sozinho só na primeira vez; depois, quem manda no zoom é a pessoa.
+  if (!jaEnquadrou && pontos.length > 1) { mapaOp.fitBounds(pontos, {padding: [30, 30], maxZoom: 16}); jaEnquadrou = true; }
+
+  const leg = $("legenda"); leg.innerHTML = "";
+  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--verde)"}), document.createTextNode("Restaurante")));
+  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--vermelho)"}), document.createTextNode("Na fila")));
+  listaMotoboys.forEach((m) => leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:" + corDe(m.id)}), document.createTextNode(m.id))));
+}
+function focarNoMapa(id) {
+  const mk = marcadores[id];
+  if (!mk) return;
+  $("colMapa").scrollIntoView({behavior: "smooth", block: "nearest"});
+  mapaOp.setView(mk.getLatLng(), Math.max(mapaOp.getZoom(), 16));
+  mk.openPopup();
+}
+$("centralizar").onclick = () => {
+  const pts = [[CONFIG.restaurante.lat, CONFIG.restaurante.lng], ...pedidosAtuais.map((p) => [p.lat, p.lng]),
+               ...listaMotoboys.filter((m) => m.gps_ativo).map((m) => [m.gps_lat, m.gps_lng])];
+  if (pts.length > 1) mapaOp.fitBounds(pts, {padding: [30, 30], maxZoom: 16});
+  else mapaOp.setView(pts[0], 14);
+};
+
+// ---------------------------------------------------------------------
+// Motoboys
+// ---------------------------------------------------------------------
+let centro = null, ultimaListaMoto = "";
+async function carregarMotos(automatico) {
+  if (!chave) return;
+  try {
+    const r = await api("/motoboys");
+    centro = r.centro;
+    listaMotoboys = r.motoboys;
+    $("contMoto").textContent = r.motoboys.filter((m) => m.ativo).length + " de turno";
+    const assinatura = JSON.stringify(r.motoboys);
+    if (automatico && assinatura === ultimaListaMoto) return;  // nada mudou: não redesenha
+    ultimaListaMoto = assinatura;
+    const ul = $("listaMoto"); ul.innerHTML = "";
+    if (!r.motoboys.length) ul.append(el("li", {className: "vazio", textContent: "Nenhum motoboy cadastrado."}));
+    r.motoboys.forEach((m) => {
+      const nome = el("div", {className: "nomeMoto"}, el("span", {className: "bolinha", style: "background:" + corDe(m.id)}),
+                      document.createTextNode(m.id), el("span", {className: "detalheMoto", textContent: m.paradas + " parada(s)"}));
+      if (m.gps_ativo) nome.append(el("span", {className: "gps", textContent: "GPS"}));
+      const g = el("button", {className: "mini " + (m.ativo ? "on" : "off"), textContent: m.ativo ? "De turno" : "Fora de turno"});
+      g.onclick = async () => {
+        g.disabled = true;
+        try { await api("/motoboys/" + encodeURIComponent(m.id) + "/turno", "POST", {ativo: !m.ativo}); atualizarTudo(); }
+        catch (err) { dizer($("msgMoto"), err.message, "erro"); g.disabled = false; }
+      };
+      const b = el("button", {textContent: "Remover", className: "perigo mini"});
+      b.onclick = async () => {
+        if (!confirm("Remover " + m.id + "?" + (m.paradas ? "\nAs " + m.paradas + " parada(s) dele voltam para a fila." : ""))) return;
+        try { await api("/motoboys/" + encodeURIComponent(m.id), "DELETE"); dizer($("msgMoto"), m.id + " removido.", "ok"); atualizarTudo(); }
+        catch (err) { dizer($("msgMoto"), err.message, "erro"); }
+      };
+      ul.append(el("li", {}, nome, el("div", {className: "acoes", style: "margin:0"}, g, b)));
+    });
+  } catch (err) { dizer($("msgMoto"), err.message, "erro"); }
+}
+
+// Código aleatório sem letras que se confundem (0/O, 1/l/I).
+$("gerarCodigo").onclick = () => {
+  const letras = "abcdefghjkmnpqrstuvwxyz23456789", n = new Uint32Array(8);
+  crypto.getRandomValues(n);
+  $("motoCodigo").value = Array.from(n, (x) => letras[x % letras.length]).join("");
+};
+
+$("salvarMoto").onclick = async () => {
+  const nome = $("motoNome").value.trim(), codigo = $("motoCodigo").value.trim();
+  if (!nome) { dizer($("msgMoto"), "Digite o nome do motoboy.", "erro"); return; }
+  if (codigo.length < 6) { dizer($("msgMoto"), "O código precisa ter pelo menos 6 caracteres (use o botão Gerar).", "erro"); return; }
+  $("salvarMoto").disabled = true;
+  try {
+    if (!centro) await carregarMotos();
+    if (!centro) throw new Error("Entre com a chave primeiro.");
+    await api("/motoboys", "POST", {id: nome, codigo: codigo, lat: centro.lat, lng: centro.lng});
+    // O código vai depois do "#": essa parte do link não é enviada ao servidor.
+    const link = location.origin + "/motoboy?id=" + encodeURIComponent(nome) + "#codigo=" + encodeURIComponent(codigo);
+    const msg = $("msgMoto"); msg.className = "ok"; msg.textContent = "Salvo! Link para enviar ao motoboy: " + link + " ";
+    const copiar = el("button", {textContent: "Copiar link", className: "mini"});
+    copiar.onclick = async () => { try { await navigator.clipboard.writeText(link); copiar.textContent = "Copiado!"; } catch (e) { copiar.textContent = "Copie à mão"; } };
+    msg.append(copiar);
+    $("motoNome").value = ""; $("motoCodigo").value = "";
+    atualizarTudo();
+  } catch (err) { dizer($("msgMoto"), err.message, "erro"); }
+  $("salvarMoto").disabled = false;
+};
+
+// ---------------------------------------------------------------------
+// Resumo, histórico e bairros
+// ---------------------------------------------------------------------
+async function carregarResumo() {
+  if (!chave) return;
+  try {
+    const r = await api("/resumo");
+    $("rPendentes").textContent = r.pendentes;
+    $("rEmRota").textContent = r.em_rota;
+    $("rEntregues").textContent = r.entregues_hoje;
+    $("rTempo").textContent = r.tempo_medio_min === null ? "—" : r.tempo_medio_min + " min";
+    $("despachar").textContent = r.pendentes ? "Despachar agora (" + r.pendentes + ")" : "Despachar agora";
+  } catch (e) { /* não interrompe o resto do painel por causa disso */ }
+}
+
+$("baixarHistorico").onclick = async () => {
+  if (!chave) { dizer($("msgHistorico"), "Entre com a chave primeiro.", "erro"); return; }
+  const dias = $("diasHistorico").value || 30;
+  $("baixarHistorico").disabled = true;
+  dizer($("msgHistorico"), "Gerando arquivo...");
+  try {
+    const resp = await fetch("/historico.csv?dias=" + encodeURIComponent(dias), {headers: {"X-API-Key": chave}});
+    if (!resp.ok) throw new Error("Não consegui gerar o histórico agora.");
+    const nome = ((resp.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/) || [])[1] || "historico.csv";
+    const url = URL.createObjectURL(await resp.blob());
+    const a = el("a", {href: url, download: nome});
+    document.body.append(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    dizer($("msgHistorico"), "Baixado.", "ok");
+  } catch (err) { dizer($("msgHistorico"), err.message, "erro"); }
+  $("baixarHistorico").disabled = false;
+};
+
+async function carregarBairros() {
+  if (!chave) return;
+  try {
+    const r = await api("/bairros");
+    const dl = $("listaBairros"); dl.innerHTML = "";
+    r.bairros.forEach((b) => dl.append(el("option", {value: b})));
+  } catch (e) { /* sugestão é só uma ajuda; sem ela o campo funciona igual */ }
+}
+
+// carregarMotos primeiro: as cores e o seletor de "Atribuir" dependem da lista de motoboys.
+// automatico = true só na atualização periódica; depois de um clique, sempre redesenha.
+async function atualizarTudo(automatico) { await carregarMotos(automatico); await carregarFila(automatico); await carregarResumo(); }
+iniciarMapa();
+atualizarTudo();
+carregarBairros();
+setInterval(() => atualizarTudo(true), 10000);
+</script>
+</body>
+</html>
