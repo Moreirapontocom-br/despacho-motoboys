@@ -6,16 +6,16 @@ manda o próprio código no cabeçalho X-Codigo e só vê a rota dele.
 from datetime import timedelta
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 import banco
 import paginas
 from api_painel import rotulo
-from config import RESTAURANTE
-from horarios import agora_utc, parse_ts
-from mapas import trajeto
+from config import FATOR_RUAS, RESTAURANTE
+from horarios import agora_utc, gps_recente, inicio_do_dia_utc, parse_ts
+from mapas import custo_reta, trajeto
 from seguranca import conferir_codigo
 
 router = APIRouter()
@@ -26,12 +26,37 @@ class Posicao(BaseModel):
     lng: float = Field(ge=-180, le=180)
 
 
+class Disponivel(BaseModel):
+    ativo: bool
+
+
+def _estimar_minutos(paradas, origem):
+    """Minutos estimados de cada trecho (da parada anterior até esta). Quando a
+    parada é de uma saída seguinte, o trecho passa pelo restaurante. Estimativa
+    em linha reta x FATOR_RUAS a ~30 km/h: serve de referência, não é exata."""
+    anterior, viagem = origem, None
+    for p in paradas:
+        if viagem is not None and p.get("viagem") != viagem:
+            segundos = custo_reta(anterior, RESTAURANTE) + custo_reta(RESTAURANTE, p)
+            p["volta_antes"] = True  # precisa passar no restaurante para pegar este
+        else:
+            segundos = custo_reta(anterior, p)
+            p["volta_antes"] = False
+        p["minutos"] = max(1, round(segundos * FATOR_RUAS / 60))
+        anterior, viagem = p, p.get("viagem")
+
+
 @router.get("/rotas/{motoboy_id}")
 def rota_do_motoboy(motoboy_id: str, request: Request, x_codigo: str = Header(default="")):
     with banco.engine.connect() as con:
         conferir_codigo(con, request, motoboy_id, x_codigo)
+        motoboy = con.execute(text("SELECT ativo, gps_lat, gps_lng, gps_em FROM motoboys WHERE id = :id"),
+                              {"id": motoboy_id}).first()
+        entregues_hoje = con.execute(text(
+            "SELECT COUNT(*) FROM pedidos WHERE motoboy_id = :id AND status = 'concluido' AND concluido_em >= :ini"),
+            {"id": motoboy_id, "ini": inicio_do_dia_utc()}).scalar()
         paradas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, num, endereco, complemento, referencia, telefone, lat, lng, viagem, saiu_em FROM pedidos "
+            "SELECT id, num, cliente, endereco, complemento, referencia, telefone, lat, lng, viagem, saiu_em FROM pedidos "
             "WHERE motoboy_id = :id AND status = 'despachado' ORDER BY ordem"),
             {"id": motoboy_id})]
         # Pedidos dele cancelados na última hora, para a página mostrar um aviso
@@ -46,7 +71,14 @@ def rota_do_motoboy(motoboy_id: str, request: Request, x_codigo: str = Header(de
     for p in paradas:
         p["rotulo"] = rotulo(p["num"], p["id"])
         p["saiu"] = bool(p.pop("saiu_em"))
-    return {"motoboy_id": motoboy_id, "restaurante": RESTAURANTE, "paradas": paradas, "cancelados": cancelados,
+    gps = None
+    if motoboy is not None and gps_recente(motoboy.gps_em) and motoboy.gps_lat is not None:
+        gps = {"lat": motoboy.gps_lat, "lng": motoboy.gps_lng}
+    # Já na rua com GPS: a estimativa da 1ª parada sai de onde ele está.
+    _estimar_minutos(paradas, gps if gps and paradas and paradas[0]["saiu"] else RESTAURANTE)
+    return {"motoboy_id": motoboy_id, "ativo": bool(motoboy.ativo) if motoboy is not None else False,
+            "restaurante": RESTAURANTE, "paradas": paradas, "cancelados": cancelados, "gps": gps,
+            "hoje": {"entregas": entregues_hoje},
             "trajeto": trajeto(RESTAURANTE, paradas) if paradas else None}
 
 
@@ -86,6 +118,17 @@ def avisar_saida(motoboy_id: str, request: Request, x_codigo: str = Header(defau
     return {"mensagem": "Boa entrega!", "paradas": n}
 
 
+@router.post("/rotas/{motoboy_id}/disponivel")
+def definir_disponivel(motoboy_id: str, d: Disponivel, request: Request, x_codigo: str = Header(default="")):
+    """O próprio motoboy diz se está disponível para receber rotas (liga/desliga o
+    turno dele). É o mesmo "De turno" do painel do restaurante. Desligar não mexe
+    nas entregas que ele já tem."""
+    with banco.engine.begin() as con:
+        conferir_codigo(con, request, motoboy_id, x_codigo)
+        con.execute(text("UPDATE motoboys SET ativo = :a WHERE id = :id"), {"a": d.ativo, "id": motoboy_id})
+    return {"mensagem": "Você está disponível" if d.ativo else "Turno encerrado", "ativo": d.ativo}
+
+
 @router.post("/rotas/{motoboy_id}/posicao")
 def atualizar_posicao(motoboy_id: str, p: Posicao, request: Request, x_codigo: str = Header(default="")):
     """A página do motoboy chama isto sozinha (a cada ~1 min) quando ele escolhe
@@ -105,3 +148,32 @@ def pagina_do_motoboy():
     """Página com o mapa. Abra em /motoboy?id=NOME#codigo=CODIGO (não contém dados de clientes).
     O código vai depois do "#" para não ser enviado ao servidor nem gravado nos logs."""
     return HTMLResponse(_MOTOBOY_HTML)
+
+
+@router.get("/m/{motoboy_id}")
+def link_curto_do_motoboy(motoboy_id: str):
+    """Link curto do motoboy: /m/NOME (na 1ª vez, /m/NOME#codigo=CODIGO).
+    Depois de aberto uma vez, o código fica guardado no celular e o link sozinho já entra."""
+    return HTMLResponse(_MOTOBOY_HTML)
+
+
+@router.get("/m/{motoboy_id}/app.webmanifest")
+def manifesto(motoboy_id: str):
+    """Permite "Adicionar à tela inicial": vira um ícone que abre direto a rota dele."""
+    return JSONResponse({
+        "name": f"Entregas — {motoboy_id}", "short_name": motoboy_id[:12] or "Entregas",
+        "start_url": f"/m/{motoboy_id}", "scope": "/m/", "display": "standalone",
+        "background_color": "#111827", "theme_color": "#111827",
+        "icons": [{"src": "/icone.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}],
+    }, media_type="application/manifest+json")
+
+
+_ICONE = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="110" fill="#059669"/>'
+          '<g fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">'
+          '<circle cx="150" cy="350" r="55"/><circle cx="370" cy="350" r="55"/>'
+          '<path d="M150 350h120l60-150h-70M330 200l40 150M200 250h90"/></g></svg>')
+
+
+@router.get("/icone.svg")
+def icone():
+    return Response(_ICONE, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})

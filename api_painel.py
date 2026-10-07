@@ -46,6 +46,7 @@ class DadosPedido(BaseModel):
     referencia: Optional[str] = Field(default=None, max_length=200)
     cep: Optional[str] = Field(default=None, max_length=12)
     telefone: Optional[str] = Field(default=None, max_length=20)
+    cliente: Optional[str] = Field(default=None, max_length=80)
 
 
 class Pedido(DadosPedido):
@@ -106,7 +107,7 @@ def rotulo(num, pedido_id):
 def _limpar_dados(con, dados):
     """Campos vazios viram NULL. Se o bairro já foi usado antes com outra grafia de
     maiúsculas/minúsculas ("amazonas" x "Amazonas"), usa a grafia já salva."""
-    for c in banco.CAMPOS_ENDERECO + ("telefone",):
+    for c in banco.CAMPOS_ENDERECO + ("telefone", "cliente"):
         dados[c] = (dados.get(c) or "").strip() or None
     if dados["bairro"]:
         existente = con.execute(text(
@@ -130,8 +131,8 @@ def criar_pedido(pedido: Pedido):
     - Sem id: o servidor gera um id único (usado pelo painel).
     - Com id: se ele já existir, o pedido é ignorado (evita duplicar em reenvios)."""
     sql = text(
-        "INSERT INTO pedidos (id, num, endereco, lat, lng, rua, numero, bairro, complemento, referencia, cep, telefone) "
-        "VALUES (:id, :num, :endereco, :lat, :lng, :rua, :numero, :bairro, :complemento, :referencia, :cep, :telefone) "
+        "INSERT INTO pedidos (id, num, endereco, lat, lng, rua, numero, bairro, complemento, referencia, cep, telefone, cliente) "
+        "VALUES (:id, :num, :endereco, :lat, :lng, :rua, :numero, :bairro, :complemento, :referencia, :cep, :telefone, :cliente) "
         "ON CONFLICT (id) DO NOTHING")
     # A trava garante que dois pedidos criados no mesmo instante não recebam o mesmo número do dia.
     with _trava_numero, banco.engine.begin() as con:
@@ -167,7 +168,7 @@ def editar_pedido(pedido_id: str, pedido: DadosPedido):
         dados["id"] = pedido_id
         r = con.execute(text(
             "UPDATE pedidos SET endereco = :endereco, lat = :lat, lng = :lng, rua = :rua, numero = :numero, "
-            "bairro = :bairro, complemento = :complemento, referencia = :referencia, cep = :cep, telefone = :telefone "
+            "bairro = :bairro, complemento = :complemento, referencia = :referencia, cep = :cep, telefone = :telefone, cliente = :cliente "
             "WHERE id = :id AND status = 'pendente'"), dados)
         if r.rowcount == 0:
             raise HTTPException(status_code=409, detail="Esse pedido não está mais na fila (já foi despachado, entregue ou cancelado).")
@@ -205,7 +206,7 @@ def listar_pedidos():
       longe       passa do raio máximo do despacho automático"""
     with banco.engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, num, endereco, rua, numero, bairro, complemento, referencia, cep, telefone, lat, lng, "
+            "SELECT id, num, endereco, rua, numero, bairro, complemento, referencia, cep, telefone, cliente, lat, lng, "
             "status, motoboy_id, ordem, criado_em, despachado_em, saiu_em FROM pedidos WHERE status IN ('pendente', 'despachado') "
             "ORDER BY status, motoboy_id, ordem, criado_em"))]
         regras = ajustes.ler(con)
@@ -566,8 +567,12 @@ def listar_motoboys():
             "(SELECT COUNT(*) FROM pedidos p WHERE p.motoboy_id = m.id AND p.status = 'despachado') AS paradas "
             "FROM motoboys m ORDER BY m.id"))]
         estados, abertas = despacho.ler_estados(con, todos=True)
+    agora = agora_utc()
     for m in linhas:
+        gps_em = parse_ts(m["gps_em"])
         m["gps_ativo"] = gps_recente(m.pop("gps_em")) and m["gps_lat"] is not None
+        # Há quantos segundos chegou a última posição (o painel mostra "atualizado há 20 s").
+        m["gps_segundos"] = max(0, int((agora - gps_em).total_seconds())) if m["gps_ativo"] and gps_em else None
         if not m["gps_ativo"]:
             m["gps_lat"] = m["gps_lng"] = None
         # Resumo para o mapa: situação, km e minutos estimados até terminar e voltar.
@@ -708,19 +713,19 @@ def historico_csv(dias: int = 30):
     dias = max(1, min(dias, 365))
     with banco.engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, num, endereco, bairro, complemento, referencia, telefone, motoboy_id, criado_em, concluido_em "
+            "SELECT id, num, cliente, endereco, bairro, complemento, referencia, telefone, motoboy_id, criado_em, concluido_em "
             "FROM pedidos WHERE status = 'concluido' AND concluido_em >= :inicio ORDER BY concluido_em"),
             {"inicio": inicio_do_dia_utc(dias_atras=dias - 1)})]
 
     saida = io.StringIO()
     saida.write("﻿")  # marca de ordem de bytes: sem isso o Excel no Windows pode exibir acentos errados
     escritor = csv.writer(saida, delimiter=";")
-    escritor.writerow(["Pedido", "Nº do dia", "Endereço", "Bairro", "Complemento", "Referência", "Telefone",
+    escritor.writerow(["Pedido", "Nº do dia", "Cliente", "Endereço", "Bairro", "Complemento", "Referência", "Telefone",
                        "Motoboy", "Criado em", "Entregue em", "Tempo (min)"])
     for p in linhas:
         criado_t, concluido_t = parse_ts(p["criado_em"]), parse_ts(p["concluido_em"])
         tempo = round((concluido_t - criado_t).total_seconds() / 60, 1) if criado_t else ""
-        escritor.writerow([p["id"], p["num"] or "", p["endereco"], p["bairro"] or "", p["complemento"] or "",
+        escritor.writerow([p["id"], p["num"] or "", p["cliente"] or "", p["endereco"], p["bairro"] or "", p["complemento"] or "",
                            p["referencia"] or "", p["telefone"] or "", p["motoboy_id"] or "",
                            fmt_local(criado_t), fmt_local(concluido_t), tempo])
 

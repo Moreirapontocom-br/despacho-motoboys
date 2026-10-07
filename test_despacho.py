@@ -377,7 +377,7 @@ def test_cancelamento_de_pedido_na_fila_nao_avisa_ninguem(api):
 
 def test_paginas_abrem(api):
     assert "Painel do restaurante" in api.get("/painel").text
-    assert "Minha rota" in api.get("/motoboy").text
+    assert "Minhas entregas" in api.get("/motoboy").text
 
 
 # ---------------------------------------------------------------------
@@ -693,3 +693,58 @@ def test_lista_de_motoboys_mostra_situacao(api):
     assert m["Ana"]["situacao"] == "saindo" and m["Ana"]["km_rota"] > 0 and m["Ana"]["minutos_livre"] >= 1
     api.post("/rotas/Ana/saiu", headers={"X-Codigo": CODIGO})
     assert api.get("/motoboys", headers=CHAVE).json()["motoboys"][0]["situacao"] == "em_rota"
+
+
+# ---------------------------------------------------------------------
+# Página do motoboy (versão "uma entrega por vez")
+# ---------------------------------------------------------------------
+def test_link_curto_abre_a_pagina_e_tem_manifesto(api):
+    r = api.get("/m/Joao")
+    assert r.status_code == 200 and "Minhas entregas" in r.text
+    man = api.get("/m/Joao/app.webmanifest").json()
+    assert man["start_url"] == "/m/Joao" and man["display"] == "standalone"
+    assert api.get("/icone.svg").headers["content-type"].startswith("image/svg")
+
+
+def test_rota_traz_cliente_tempos_e_entregas_do_dia(api):
+    novo_motoboy(api, "Carlos")
+    a = novo_pedido(api, lat=-19.630, lng=-43.240, cliente="Maria")["id"]
+    b = novo_pedido(api, lat=-19.631, lng=-43.241)["id"]
+    api.post("/despachar", headers=CHAVE)
+    d = ver_rota(api, "Carlos").json()
+    assert d["ativo"] is True and d["hoje"]["entregas"] == 0
+    paradas = {p["id"]: p for p in d["paradas"]}
+    assert paradas[a]["cliente"] == "Maria"
+    assert all(p["minutos"] >= 1 for p in d["paradas"])
+    api.post(f"/rotas/Carlos/entregar/{a}", headers={"X-Codigo": CODIGO})
+    assert ver_rota(api, "Carlos").json()["hoje"]["entregas"] == 1
+    assert [p["id"] for p in ver_rota(api, "Carlos").json()["paradas"]] == [b]
+
+
+def test_parada_da_proxima_saida_avisa_que_passa_no_restaurante(api):
+    novo_motoboy(api, "Carlos")
+    novo_pedido(api, lat=-19.630, lng=-43.240)
+    api.post("/despachar", headers=CHAVE)
+    api.post("/rotas/Carlos/saiu", headers={"X-Codigo": CODIGO})
+    novo_pedido(api, lat=-19.600, lng=-43.210)
+    api.post("/despachar", headers=CHAVE)
+    paradas = ver_rota(api, "Carlos").json()["paradas"]
+    assert [p["volta_antes"] for p in paradas] == [False, True]
+
+
+def test_motoboy_se_marca_disponivel_ou_encerra_turno(api):
+    novo_motoboy(api, "Carlos")
+    h = {"X-Codigo": CODIGO}
+    assert api.post("/rotas/Carlos/disponivel", json={"ativo": False}, headers=h).status_code == 200
+    assert not api.get("/motoboys", headers=CHAVE).json()["motoboys"][0]["ativo"]
+    assert ver_rota(api, "Carlos").json()["ativo"] is False
+    api.post("/rotas/Carlos/disponivel", json={"ativo": True}, headers=h)
+    assert api.get("/motoboys", headers=CHAVE).json()["motoboys"][0]["ativo"]
+    assert api.post("/rotas/Carlos/disponivel", json={"ativo": False}, headers={"X-Codigo": "errado"}).status_code == 401
+
+
+def test_painel_mostra_ha_quanto_tempo_veio_o_gps(api):
+    novo_motoboy(api, "Carlos")
+    api.post("/rotas/Carlos/posicao", json={"lat": R["lat"] - 0.01, "lng": R["lng"]}, headers={"X-Codigo": CODIGO})
+    m = api.get("/motoboys", headers=CHAVE).json()["motoboys"][0]
+    assert m["gps_ativo"] is True and 0 <= m["gps_segundos"] < 30

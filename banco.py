@@ -40,7 +40,8 @@ _COLUNAS_NOVAS = {
                 ("num", "INTEGER"),  # número do pedido no dia (#1, #2...), fácil de falar no balcão
                 # viagem: paradas com o mesmo valor saíram juntas do restaurante (usado nas estatísticas).
                 # saiu_em: quando o motoboy tocou em "Saí do restaurante" na página dele.
-                ("viagem", "TEXT"), ("saiu_em", "TIMESTAMP")]
+                ("viagem", "TEXT"), ("saiu_em", "TIMESTAMP"),
+                ("cliente", "TEXT")]  # nome do cliente (opcional), aparece para o motoboy
                + [(c, "TEXT") for c in CAMPOS_ENDERECO],
 }
 

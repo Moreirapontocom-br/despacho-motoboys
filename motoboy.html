@@ -1,263 +1,420 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" translate="no">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Minha rota</title>
-<!-- integrity: se o arquivo do CDN for alterado por alguém, o navegador se recusa a usá-lo (protege a API_KEY guardada na página). Hashes oficiais do Leaflet 1.9.4. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="google" content="notranslate">
+<meta name="theme-color" content="#111827">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="/icone.svg" type="image/svg+xml">
+<title>Minhas entregas</title>
+<!-- integrity: se o arquivo do CDN for alterado por alguém, o navegador se recusa a usá-lo. Hashes oficiais do Leaflet 1.9.4. -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <style>
- body{font-family:system-ui,sans-serif;margin:0;background:#f5f5f5;color:#222}
- header{padding:12px 16px;background:#1f2937;color:#fff;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
- header input{padding:6px;border-radius:6px;border:0}
- header button{padding:6px 12px;border:0;border-radius:6px;background:#10b981;color:#fff}
- #modo{padding:8px 16px;background:#e5e7eb}
- #modo select{padding:6px;border-radius:6px;font-size:1rem}
- #mapa{height:50vh}
- #msg{padding:12px 16px}
- #paradas{list-style:none;margin:0;padding:0 8px 8px}
- #paradas li{background:#fff;margin:8px 0;padding:10px 12px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px}
- #paradas a{background:#2563eb;color:#fff;padding:6px 10px;border-radius:6px;text-decoration:none}
- .num{background:#2563eb;color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:bold;border:2px solid #fff}
- .rest{background:#10b981}
- .acoes{display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
- .ent{background:#10b981;color:#fff;border:0;border-radius:6px;padding:6px 10px;font-size:1rem;cursor:pointer}
- .ent:disabled{opacity:.5}
- .completa{display:inline-block;margin-left:8px;background:#10b981;color:#fff;padding:6px 10px;border-radius:6px;text-decoration:none}
- #paradas a.sec{background:#6b7280}
- .extra{font-size:.9rem;color:#b45309;font-weight:600;margin-top:3px}
- #paradas a.ligar{background:#059669}
- .cancelado{background:#b91c1c;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;font-weight:600}
- #proxima{display:none;background:#fff;margin:8px;padding:12px 14px;border-radius:10px;border:2px solid #2563eb}
- #proxima .rot{font-size:.8rem;color:#6b7280;text-transform:uppercase;font-weight:700;letter-spacing:.04em}
- #proxima .end{font-size:1.2rem;font-weight:700;margin:4px 0}
- #proxima .botoes{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
- #proxima .botoes a,#proxima .botoes button{flex:1;text-align:center;padding:12px;border-radius:8px;font-size:1.05rem;font-weight:700;border:0;text-decoration:none;color:#fff}
- .bmaps{background:#2563eb} .bsaiu{background:#f59e0b} .bentregue{background:#10b981}
- .cancelado button{background:#fff;color:#b91c1c;border:0;border-radius:6px;padding:8px 12px;font-size:1rem;font-weight:700;flex-shrink:0}
+ :root{--fundo:#f1f3f6;--texto:#111827;--suave:#6b7280;--verde:#059669;--azul:#2563eb;--vermelho:#b91c1c;--amarelo:#fef3c7}
+ *{box-sizing:border-box}
+ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:var(--fundo);color:var(--texto);font-size:17px;
+      padding-bottom:env(safe-area-inset-bottom)}
+ button,input{font:inherit}
+ .cabeca{background:#111827;color:#fff;padding:12px 16px;padding-top:calc(12px + env(safe-area-inset-top));
+         display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:1000}
+ .cabeca .nome{font-weight:800;font-size:1.15rem;letter-spacing:.02em;text-transform:uppercase;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .pilula{font-size:.85rem;font-weight:700;padding:5px 11px;border-radius:20px;background:#374151;white-space:nowrap}
+ .pilula.livre{background:#065f46} .pilula.rota{background:#1d4ed8} .pilula.fora{background:#4b5563}
+ main{max-width:560px;margin:0 auto;padding:12px}
+ .cartao{background:#fff;border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+ .rot{font-size:.8rem;font-weight:800;color:var(--suave);text-transform:uppercase;letter-spacing:.05em}
+ .grande{font-size:1.35rem;font-weight:800;line-height:1.25;margin:6px 0}
+ .meio{font-size:1.05rem;margin:4px 0}
+ .destaque{background:var(--amarelo);color:#92400e;font-weight:700;border-radius:8px;padding:8px 10px;margin:8px 0}
+ .suave{color:var(--suave);font-size:.92rem}
+ .botao{display:block;width:100%;border:0;border-radius:12px;padding:17px 12px;font-size:1.15rem;font-weight:800;color:#fff;
+        text-align:center;text-decoration:none;margin-top:10px;cursor:pointer}
+ .botao:disabled{opacity:.55}
+ .verde{background:var(--verde)} .azul{background:var(--azul)} .cinza{background:#6b7280} .claro{background:#e5e7eb;color:var(--texto)}
+ .confirmando{background:#047857;box-shadow:0 0 0 4px #a7f3d0}
+ .dupla{display:flex;gap:10px} .dupla .botao{flex:1}
+ .passos{list-style:none;margin:0;padding:0}
+ .passos li{display:flex;gap:12px;padding:12px 0;border-top:1px solid #e5e7eb}
+ .passos li:first-child{border-top:0}
+ .bola{flex:0 0 34px;height:34px;border-radius:50%;background:var(--azul);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+ .bola.rest{background:var(--verde)}
+ .passos .info{flex:1;min-width:0}
+ .passos .titulo{font-weight:800}
+ .passos a.nav{display:inline-block;margin-top:6px;background:#eff6ff;color:var(--azul);font-weight:700;padding:7px 12px;border-radius:8px;text-decoration:none;font-size:.95rem}
+ .seta{color:#9ca3af;text-align:center;font-size:.9rem;margin:-4px 0}
+ .rodape{position:sticky;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--fundo) 30%)}
+ .rodape .botao{margin:0;box-shadow:0 4px 14px rgba(5,150,105,.35)}
+ #mapa{height:300px;border-radius:14px;margin-bottom:12px}
+ .aviso{padding:14px 16px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:10px}
+ .aviso.cancelado{background:var(--vermelho);color:#fff}
+ .aviso.novo{background:#1d4ed8;color:#fff}
+ .aviso button{background:#fff;color:#111827;border:0;border-radius:8px;padding:9px 14px;font-weight:800;flex-shrink:0}
+ .linkzinho{background:none;border:0;color:var(--azul);font-weight:700;padding:8px 0;cursor:pointer}
+ .grande-icone{font-size:3rem;text-align:center;margin:6px 0}
+ #login input{width:100%;padding:13px;border-radius:10px;border:1px solid #d1d5db;margin-top:8px;font-size:1.05rem}
+ .pino{min-width:28px;height:28px;padding:0 6px;border-radius:14px;color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;
+       justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45);background:var(--azul)}
+ .pino.rest{background:var(--verde);border-radius:7px} .pino.eu{background:#111827} .pino.depois{background:#9ca3af}
 </style>
 </head>
 <body>
-<header>
- <strong>Motoboy:</strong>
- <input id="nome" placeholder="seu nome (id)">
- <input id="codigo" type="password" size="8" placeholder="código">
- <button id="ir">Ver rota</button>
-</header>
-<div id="cancelados"></div>
-<div id="proxima"></div>
-<div id="modo">Saindo de: <select id="sel"><option value="rest">do restaurante</option><option value="rua">da minha posição</option></select></div>
-<div id="mapa"></div>
-<div id="msg"></div>
-<ul id="paradas"></ul>
+<div class="cabeca"><span class="nome" id="nomeTopo">🛵</span><span class="pilula" id="pilula"></span></div>
+<div id="avisos"></div>
+<main>
+ <div id="login" class="cartao" style="display:none">
+  <div class="grande">Entrar</div>
+  <div class="suave">Use o link que o restaurante mandou. Se não tiver, digite seu nome e código:</div>
+  <input id="nome" placeholder="Seu nome (igual ao cadastro)" autocomplete="username">
+  <input id="codigo" type="password" placeholder="Código" autocomplete="current-password">
+  <button class="botao verde" id="entrar">Entrar</button>
+  <div id="msgLogin" class="suave" style="margin-top:8px"></div>
+ </div>
+ <div id="tela"></div>
+ <div id="mapaBox" style="display:none"><div id="mapa"></div></div>
+ <div class="suave" id="rodapeInfo" style="text-align:center;padding:6px 0 18px"></div>
+</main>
+<div class="rodape" id="rodape" style="display:none"></div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 /*__CONFIG__*/
-const MAPA_URL = CONFIG.mapaUrl, MAPA_CREDITO = CONFIG.mapaCredito;
+const $ = (i) => document.getElementById(i);
+const el = (tag, props, ...filhos) => { const e = Object.assign(document.createElement(tag), props || {}); e.append(...filhos.filter((f) => f !== null && f !== undefined)); return e; };
+function ler(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function guardar(k, v) { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} }
 
-// O código do motoboy não fica no endereço da página: o link novo traz o código
-// depois do "#" (essa parte nunca é enviada ao servidor nem aparece nos logs).
-// Ao abrir, o código é guardado neste celular e apagado da barra de endereço.
-// Links antigos (?codigo=...) continuam funcionando e são limpos do mesmo jeito.
+// ---------------------------------------------------------------------
+// Acesso. O link do motoboy é /m/NOME#codigo=CODIGO (links antigos /motoboy?id=NOME
+// continuam funcionando). O código vem depois do "#": essa parte nunca vai ao
+// servidor nem aparece nos logs. Na 1ª vez ele fica guardado neste celular e é
+// apagado da barra de endereço; depois, o link /m/NOME sozinho já entra.
+// ---------------------------------------------------------------------
 const qs = new URLSearchParams(location.search);
 const hs = new URLSearchParams(location.hash.slice(1));
-const id = qs.get("id") || "";
-function lerCodigoGuardado(n) { try { return localStorage.getItem("codigo:" + n) || ""; } catch (e) { return ""; } }
-function guardarCodigo(n, c) { try { if (c) localStorage.setItem("codigo:" + n, c); else localStorage.removeItem("codigo:" + n); } catch (e) {} }
+const pelaRota = location.pathname.match(/^\/m\/([^\/]+)\/?$/);
+const id = pelaRota ? decodeURIComponent(pelaRota[1]) : (qs.get("id") || "");
 let codigo = hs.get("codigo") || qs.get("codigo") || "";
-if (codigo && id) guardarCodigo(id, codigo);
-if (!codigo && id) codigo = lerCodigoGuardado(id);
-if (location.hash || qs.has("codigo")) {
-  history.replaceState(null, "", location.pathname + (id ? "?id=" + encodeURIComponent(id) : ""));
+if (codigo && id) guardar("codigo:" + id, codigo);
+if (!codigo && id) codigo = ler("codigo:" + id) || "";
+const enderecoLimpo = id ? "/m/" + encodeURIComponent(id) : location.pathname;
+if (location.hash || qs.has("codigo") || (id && !pelaRota)) history.replaceState(null, "", enderecoLimpo);
+if (id) {
+  $("nomeTopo").textContent = "🛵 " + id;
+  // "Adicionar à tela inicial" abre direto a rota dele.
+  document.head.append(el("link", {rel: "manifest", href: "/m/" + encodeURIComponent(id) + "/app.webmanifest"}));
 }
-const nome = document.getElementById("nome"); nome.value = id;
-const cod = document.getElementById("codigo"); cod.value = codigo;
-document.getElementById("ir").onclick = () => {
-  const n = nome.value.trim();
-  guardarCodigo(n, cod.value.trim());
-  location.href = location.pathname + "?id=" + encodeURIComponent(n);
+
+function mostrarLogin(msg) {
+  $("login").style.display = "block"; $("nome").value = id; $("tela").innerHTML = "";
+  $("mapaBox").style.display = "none"; $("rodape").style.display = "none"; $("pilula").textContent = "";
+  $("msgLogin").textContent = msg || "";
+}
+$("entrar").onclick = () => {
+  const n = $("nome").value.trim(), c = $("codigo").value.trim();
+  if (!n || !c) { $("msgLogin").textContent = "Preencha nome e código."; return; }
+  guardar("codigo:" + n, c);
+  location.href = "/m/" + encodeURIComponent(n);
 };
 
-const mapa = L.map("mapa").setView([CONFIG.restaurante.lat, CONFIG.restaurante.lng], 14);
-L.tileLayer(MAPA_URL, {maxZoom: 19, subdomains: "abc", attribution: MAPA_CREDITO}).addTo(mapa);
-const camada = L.layerGroup().addTo(mapa);
-let ultimo = "";
-let modo = "rest";
-try { if (localStorage.getItem("modo") === "rua") modo = "rua"; } catch (e) {}
-const sel = document.getElementById("sel"); sel.value = modo;
-sel.onchange = () => { modo = sel.value; try { localStorage.setItem("modo", modo); } catch (e) {} ultimo = ""; atualizar(); vigiarPosicao(); };
-
-// Em "da minha posição", a página manda o GPS sozinha de vez em quando, para o
-// despacho saber quem está mais perto de verdade. Se o celular negar a permissão
-// de localização, isso é ignorado e o resto da página continua funcionando normal.
-let vigia = null, ultimoEnvioGps = 0;
-function vigiarPosicao() {
-  if (vigia !== null) { navigator.geolocation.clearWatch(vigia); vigia = null; }
-  if (modo !== "rua" || !id || !codigo || !navigator.geolocation) return;
-  vigia = navigator.geolocation.watchPosition(
-    (pos) => {
-      const agora = Date.now();
-      if (parado || agora - ultimoEnvioGps < 45000) return;  // no máximo 1 envio a cada 45 s
-      ultimoEnvioGps = agora;
-      fetch("/rotas/" + encodeURIComponent(id) + "/posicao", {
-        method: "POST", headers: {"X-Codigo": codigo, "Content-Type": "application/json"},
-        body: JSON.stringify({lat: pos.coords.latitude, lng: pos.coords.longitude})
-      }).catch(() => {});
-    },
-    () => {},
-    {enableHighAccuracy: false, maximumAge: 60000, timeout: 20000}
-  );
-}
-vigiarPosicao();
-
-function icone(texto, classe) {
-  return L.divIcon({className: "", html: '<div class="num ' + (classe || "") + '">' + texto + "</div>", iconSize: [26, 26]});
+async function chamar(caminho, metodo, corpo) {
+  const resp = await fetch(caminho, {method: metodo || "GET", headers: {"X-Codigo": codigo, "Content-Type": "application/json"},
+                                     body: corpo ? JSON.stringify(corpo) : undefined});
+  return resp;
 }
 
-// Aviso de pedido cancelado: fica na tela até o motoboy tocar em "Entendi".
-// Os já vistos ficam guardados no celular para o aviso não voltar.
+// ---------------------------------------------------------------------
+// Som e vibração quando chega entrega nova. O navegador só deixa tocar som
+// depois que a pessoa tocou na tela uma vez; por isso o som é "destravado"
+// no primeiro toque.
+// ---------------------------------------------------------------------
+let audio = null;
+document.addEventListener("click", () => {
+  try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch (e) {}
+}, {capture: true});
+function apitar() {
+  try { navigator.vibrate && navigator.vibrate([300, 150, 300, 150, 300]); } catch (e) {}
+  if (!audio) return;
+  try {
+    [0, 0.25, 0.5].forEach((t) => {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.frequency.value = 880; o.connect(g); g.connect(audio.destination);
+      g.gain.setValueAtTime(0.25, audio.currentTime + t); g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + t + 0.2);
+      o.start(audio.currentTime + t); o.stop(audio.currentTime + t + 0.2);
+    });
+  } catch (e) {}
+}
+
+// Avisos no topo: pedido cancelado (fica até tocar em "Entendi") e entrega nova.
 const chaveVistos = "cancelVistos:" + id;
 let vistos = new Set();
-try { vistos = new Set(JSON.parse(localStorage.getItem(chaveVistos) || "[]")); } catch (e) {}
+try { vistos = new Set(JSON.parse(ler(chaveVistos) || "[]")); } catch (e) {}
 const jaVibrou = new Set();
-function mostrarCancelados(lista) {
-  const caixa = document.getElementById("cancelados");
-  caixa.innerHTML = "";
-  (lista || []).filter((c) => !vistos.has(c.id)).forEach((c) => {
-    const d = document.createElement("div"); d.className = "cancelado";
-    const t = document.createElement("span");
-    t.textContent = "PEDIDO " + c.rotulo + " CANCELADO — " + c.endereco + (c.complemento ? " (" + c.complemento + ")" : "") +
-      ". Não entregue. Se já estiver com a comida, fale com o restaurante.";
-    const b = document.createElement("button"); b.textContent = "Entendi";
-    b.onclick = () => {
-      vistos.add(c.id);
-      try { localStorage.setItem(chaveVistos, JSON.stringify([...vistos].slice(-50))); } catch (e) {}
-      d.remove();
-    };
-    d.append(t, b); caixa.append(d);
-    if (!jaVibrou.has(c.id)) { jaVibrou.add(c.id); try { navigator.vibrate && navigator.vibrate([400, 200, 400]); } catch (e) {} }
+let avisoNovo = null;
+function desenharAvisos(cancelados) {
+  const caixa = $("avisos"); caixa.innerHTML = "";
+  (cancelados || []).filter((c) => !vistos.has(c.id)).forEach((c) => {
+    const b = el("button", {textContent: "Entendi", onclick: () => {
+      vistos.add(c.id); guardar(chaveVistos, JSON.stringify([...vistos].slice(-50))); desenharAvisos(cancelados);
+    }});
+    caixa.append(el("div", {className: "aviso cancelado"},
+      el("span", {textContent: "❌ PEDIDO " + c.rotulo + " CANCELADO — " + c.endereco + ". Não entregue. Se já estiver com a comida, fale com o restaurante."}), b));
+    if (!jaVibrou.has(c.id)) { jaVibrou.add(c.id); apitar(); }
   });
-}
-
-async function marcarEntregue(p, botao) {
-  if (!confirm("Marcar como entregue?\n" + p.endereco + (p.complemento ? "\n" + p.complemento : ""))) return;
-  botao.disabled = true;
-  try {
-    const resp = await fetch("/rotas/" + encodeURIComponent(id) + "/entregar/" + encodeURIComponent(p.id), {method: "POST", headers: {"X-Codigo": codigo}});
-    if (!resp.ok && resp.status !== 404) throw new Error("falhou");
-  } catch (err) { alert("Não consegui registrar a entrega. Tente de novo."); botao.disabled = false; return; }
-  atualizar();
-}
-
-// Cartão grande no topo: a próxima entrega, com os botões que mais importam.
-// Enquanto ele não sai, o botão principal é "Saí do restaurante": assim o
-// restaurante sabe que ele já foi e não junta pedidos novos nesta viagem.
-function mostrarProxima(dados) {
-  const caixa = document.getElementById("proxima");
-  caixa.innerHTML = "";
-  if (!dados.paradas.length) { caixa.style.display = "none"; return; }
-  const p = dados.paradas[0];
-  const naViagem = dados.paradas.filter((x) => !x.saiu).length;
-  const rot = document.createElement("div"); rot.className = "rot";
-  rot.textContent = p.saiu ? "Próxima entrega" : "Sua rota: " + naViagem + " entrega(s) nesta saída";
-  const end = document.createElement("div"); end.className = "end";
-  end.textContent = "📍 " + (p.rotulo || p.id) + " — " + p.endereco;
-  caixa.append(rot, end);
-  [p.complemento, p.referencia ? "Ref.: " + p.referencia : ""].filter(Boolean).forEach((txt) => {
-    const x = document.createElement("div"); x.className = "extra"; x.textContent = txt; caixa.append(x);
-  });
-  const botoes = document.createElement("div"); botoes.className = "botoes";
-  if (!p.saiu) {
-    const s = document.createElement("button"); s.className = "bsaiu"; s.textContent = "🛵 Saí do restaurante";
-    s.onclick = async () => {
-      s.disabled = true;
-      try {
-        const resp = await fetch("/rotas/" + encodeURIComponent(id) + "/saiu", {method: "POST", headers: {"X-Codigo": codigo}});
-        if (!resp.ok && resp.status !== 404) throw new Error("falhou");
-      } catch (e) { alert("Não consegui avisar. Tente de novo."); s.disabled = false; return; }
-      ultimo = ""; atualizar();
-    };
-    botoes.append(s);
+  if (avisoNovo) {
+    caixa.append(el("div", {className: "aviso novo"}, el("span", {textContent: avisoNovo}),
+                    el("button", {textContent: "OK", onclick: () => { avisoNovo = null; desenharAvisos(cancelados); }})));
   }
-  const a = document.createElement("a"); a.className = "bmaps"; a.target = "_blank"; a.textContent = "Abrir no Google Maps";
-  // Sem origem: o Google Maps sai de onde o celular está (no restaurante ou já na rua).
-  a.href = "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(p.endereco);
-  botoes.append(a);
-  if (p.saiu) {
-    const e = document.createElement("button"); e.className = "bentregue"; e.textContent = "✓ Entregue";
-    e.onclick = () => marcarEntregue(p, e);
-    botoes.append(e);
-  }
-  caixa.append(botoes);
-  caixa.style.display = "block";
 }
 
-function desenhar(dados) {
-  mostrarCancelados(dados.cancelados);
-  const msg = document.getElementById("msg");
-  const lista = document.getElementById("paradas");
-  camada.clearLayers(); lista.innerHTML = "";
-  if (!dados.paradas.length) { mostrarProxima(dados); msg.textContent = "Nenhuma rota no momento. Esta página atualiza sozinha."; return; }
-  msg.textContent = dados.paradas.length + " parada(s) na sua rota:";
-  const ll = (x) => x.lat + "," + x.lng;
-  const ps = dados.paradas.slice(0, 10);
-  const origem = encodeURIComponent(dados.restaurante.endereco || ll(dados.restaurante));
-  const pOrigem = modo === "rua" ? "" : "&origin=" + origem;
-  mostrarProxima(dados);
-  const meio = ps.slice(0, -1).map((x) => x.endereco).join("|");
-  const rc = document.createElement("a"); rc.textContent = modo === "rua" ? "Rota completa no Maps (da minha posição)" : "Rota completa no Maps (saindo do restaurante)"; rc.target = "_blank"; rc.className = "completa";
-  rc.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + encodeURIComponent(ps[ps.length - 1].endereco) + (meio ? "&waypoints=" + encodeURIComponent(meio) : "");
-  msg.append(" ", rc);
-  const r = dados.restaurante, pontos = [[r.lat, r.lng]];
-  L.marker([r.lat, r.lng], {icon: icone("R", "rest")}).addTo(camada);
-  dados.paradas.forEach((p, i) => {
+// ---------------------------------------------------------------------
+// Mapa (aparece na rota planejada e quando ele toca em "Ver mapa")
+// ---------------------------------------------------------------------
+let mapa = null, camada = null, verMapa = false;
+function pinIcone(texto, classe, largura) { return L.divIcon({className: "", html: '<div class="pino ' + (classe || "") + '">' + texto + "</div>", iconSize: [largura || 28, 28]}); }
+function desenharMapa(d) {
+  if (typeof L === "undefined") return;
+  if (!mapa) {
+    mapa = L.map("mapa", {zoomControl: false}).setView([CONFIG.restaurante.lat, CONFIG.restaurante.lng], 14);
+    L.tileLayer(CONFIG.mapaUrl, {maxZoom: 19, subdomains: "abc", attribution: CONFIG.mapaCredito}).addTo(mapa);
+    camada = L.layerGroup().addTo(mapa);
+  }
+  mapa.invalidateSize();
+  camada.clearLayers();
+  const r = d.restaurante, pontos = [[r.lat, r.lng]];
+  L.marker([r.lat, r.lng], {icon: pinIcone("R", "rest")}).addTo(camada);
+  d.paradas.forEach((p, i) => {
     pontos.push([p.lat, p.lng]);
-    L.marker([p.lat, p.lng], {icon: icone(i + 1)}).addTo(camada);
-    const li = document.createElement("li");
-    const t = document.createElement("span"); t.textContent = (i + 1) + ". " + (p.rotulo || p.id) + " - " + p.endereco;
-    const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : ""].filter(Boolean);
-    extras.forEach((txt) => { const x = document.createElement("div"); x.className = "extra"; x.textContent = txt; t.append(x); });
-    const a = document.createElement("a"); a.textContent = "Navegar"; a.target = "_blank";
-    a.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + encodeURIComponent(p.endereco);
-    const b = document.createElement("a"); b.textContent = "Pelo ponto"; b.target = "_blank"; b.className = "sec";
-    b.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + p.lat + "," + p.lng;
-    let lig = null;
-    const digitos = (p.telefone || "").replace(/\D/g, "");
-    if (digitos.length >= 10) {
-      lig = document.createElement("a"); lig.textContent = "Ligar"; lig.className = "ligar";
-      lig.href = "tel:+55" + digitos;
-    }
-    const e = document.createElement("button"); e.textContent = "Entregue"; e.className = "ent";
-    e.onclick = () => marcarEntregue(p, e);
-    const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(a, b); if (lig) acoes.append(lig); acoes.append(e);
-    li.append(t, acoes); lista.append(li);
+    L.marker([p.lat, p.lng], {icon: pinIcone(i + 1, p.saiu || !d.paradas[0].saiu ? "" : "depois")}).addTo(camada);
   });
-  const linha = (dados.trajeto && dados.trajeto.length > 1) ? dados.trajeto : pontos;
-  L.polyline(linha, {color: "#2563eb", weight: 5, opacity: 0.8}).addTo(camada);
-  mapa.fitBounds(pontos, {padding: [30, 30]});
+  const linha = (d.trajeto && d.trajeto.length > 1) ? d.trajeto : pontos;
+  L.polyline(linha, {color: "#2563eb", weight: 5, opacity: .8}).addTo(camada);
+  if (d.gps) {
+    L.marker([d.gps.lat, d.gps.lng], {icon: pinIcone("Você", "eu", 52), zIndexOffset: 500}).addTo(camada);
+    pontos.push([d.gps.lat, d.gps.lng]);
+  }
+  if (pontos.length > 1) mapa.fitBounds(pontos, {padding: [30, 30], maxZoom: 16});
 }
 
-let parado = false;
-async function atualizar() {
-  // Com a tela apagada ou outro app na frente, não consulta: economiza bateria e internet.
-  if (parado || document.hidden) return;
-  if (!id) { document.getElementById("msg").textContent = "Digite seu nome e código acima e clique em Ver rota."; return; }
+// ---------------------------------------------------------------------
+// Telas
+// ---------------------------------------------------------------------
+const mapsAte = (p) => "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(p.endereco);
+const mapsRota = (ps) => "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(ps[ps.length - 1].endereco) +
+  (ps.length > 1 ? "&waypoints=" + encodeURIComponent(ps.slice(0, -1).map((x) => x.endereco).join("|")) : "");
+const quem = (p) => p.cliente ? p.cliente : "Pedido " + p.rotulo;
+const plural = (n, um, varios) => n + " " + (n === 1 ? um : varios);
+
+// Botão "Entreguei" com toque duplo: o 1º toque pede confirmação (evita marcar sem querer na rua).
+function botaoEntreguei(p) {
+  const b = el("button", {className: "botao verde", textContent: "✓ ENTREGUEI"});
+  let armado = null;
+  b.onclick = async () => {
+    if (!armado) {
+      b.textContent = "Toque de novo para confirmar"; b.classList.add("confirmando");
+      armado = setTimeout(() => { armado = null; b.textContent = "✓ ENTREGUEI"; b.classList.remove("confirmando"); }, 4000);
+      return;
+    }
+    clearTimeout(armado); b.disabled = true; b.textContent = "Registrando...";
+    try {
+      const resp = await chamar("/rotas/" + encodeURIComponent(id) + "/entregar/" + encodeURIComponent(p.id), "POST");
+      if (!resp.ok && resp.status !== 404) throw new Error();
+    } catch (e) { alert("Não consegui registrar. Confira a internet e tente de novo."); b.disabled = false; armado = null; b.textContent = "✓ ENTREGUEI"; b.classList.remove("confirmando"); return; }
+    ultimo = ""; atualizar();
+  };
+  return b;
+}
+
+async function mudarDisponivel(ativo, botao) {
+  if (botao) botao.disabled = true;
   try {
-    const resp = await fetch("/rotas/" + encodeURIComponent(id), {headers: {"X-Codigo": codigo}});
+    const resp = await chamar("/rotas/" + encodeURIComponent(id) + "/disponivel", "POST", {ativo: ativo});
+    if (!resp.ok) throw new Error();
+  } catch (e) { alert("Não consegui avisar o restaurante. Tente de novo."); if (botao) botao.disabled = false; return; }
+  perguntar = false; ultimo = ""; atualizar();
+}
+
+let perguntar = false;   // "Você está disponível para outra rota?" depois de terminar
+function telaSemEntregas(d, tela, rodape) {
+  if (perguntar && d.ativo) {
+    const sim = el("button", {className: "botao verde", textContent: "SIM, ESTOU DISPONÍVEL"});
+    const nao = el("button", {className: "botao claro", textContent: "NÃO, ENCERRAR TURNO"});
+    sim.onclick = () => mudarDisponivel(true, sim);
+    nao.onclick = () => mudarDisponivel(false, nao);
+    tela.append(el("div", {className: "cartao"}, el("div", {className: "grande-icone", textContent: "✅"}),
+      el("div", {className: "grande", style: "text-align:center", textContent: "Rota concluída!"}),
+      el("div", {className: "meio", style: "text-align:center", textContent: "Você está disponível para outra rota?"}), sim, nao));
+    return;
+  }
+  if (d.ativo) {
+    const sair = el("button", {className: "botao claro", textContent: "Encerrar meu turno"});
+    sair.onclick = () => { if (confirm("Encerrar o turno? Você para de receber rotas.")) mudarDisponivel(false, sair); };
+    tela.append(el("div", {className: "cartao"}, el("div", {className: "grande-icone", textContent: "🟢"}),
+      el("div", {className: "grande", style: "text-align:center", textContent: "Você está disponível"}),
+      el("div", {className: "suave", style: "text-align:center", textContent: "Quando chegar uma rota, esta tela apita e vibra. Deixe ela aberta."}), sair));
+  } else {
+    const entrar = el("button", {className: "botao verde", textContent: "🟢 ESTOU DISPONÍVEL"});
+    entrar.onclick = () => mudarDisponivel(true, entrar);
+    tela.append(el("div", {className: "cartao"}, el("div", {className: "grande-icone", textContent: "⏸️"}),
+      el("div", {className: "grande", style: "text-align:center", textContent: "Você está fora de turno"}),
+      el("div", {className: "suave", style: "text-align:center", textContent: "Toque abaixo para começar a receber rotas."})));
+    rodape.append(entrar);
+  }
+}
+
+// Rota planejada: ainda no restaurante. Mostra o caminho todo e o botão INICIAR ROTA.
+function telaRotaPlanejada(d, tela, rodape) {
+  const viagem = d.paradas[0].viagem;
+  const desta = d.paradas.filter((p) => !p.saiu && (p.viagem === viagem || !viagem));
+  const depois = d.paradas.length - desta.length;
+  const passos = el("ul", {className: "passos"});
+  passos.append(el("li", {}, el("span", {className: "bola rest", textContent: "R"}),
+    el("div", {className: "info"}, el("div", {className: "titulo", textContent: "Restaurante"}),
+      el("div", {textContent: "📦 Retirar " + desta.map((p) => p.rotulo).join(", ")}))));
+  desta.forEach((p, i) => {
+    passos.append(el("li", {}, el("span", {className: "bola", textContent: String(i + 1)}),
+      el("div", {className: "info"},
+        el("div", {className: "titulo", textContent: quem(p) + (p.cliente ? " · " + p.rotulo : "")}),
+        el("div", {textContent: "📍 " + p.endereco}),
+        p.complemento ? el("div", {className: "suave", textContent: p.complemento}) : null,
+        el("div", {className: "suave", textContent: "⏱️ ~" + p.minutos + " min" + (i ? " desde a anterior" : " do restaurante")}),
+        el("a", {className: "nav", href: mapsAte(p), target: "_blank", rel: "noopener", textContent: "Navegar até aqui"}))));
+  });
+  const total = desta.reduce((s, p) => s + p.minutos, 0);
+  tela.append(el("div", {className: "cartao"},
+    el("div", {className: "rot", textContent: "Sua rota — " + plural(desta.length, "entrega", "entregas") + " · ~" + total + " min"}), passos,
+    depois ? el("div", {className: "suave", textContent: "Depois desta saída: mais " + plural(depois, "entrega", "entregas") + " (volte ao restaurante para pegar)."}) : null));
+  const iniciar = el("button", {className: "botao verde", textContent: "🟢 INICIAR ROTA"});
+  iniciar.onclick = async () => {
+    iniciar.disabled = true; iniciar.textContent = "Iniciando...";
+    try {
+      const resp = await chamar("/rotas/" + encodeURIComponent(id) + "/saiu", "POST");
+      if (!resp.ok && resp.status !== 404) throw new Error();
+      guardar("total:" + (viagem || "rota"), String(desta.length));
+    } catch (e) { alert("Não consegui iniciar. Confira a internet e tente de novo."); iniciar.disabled = false; iniciar.textContent = "🟢 INICIAR ROTA"; return; }
+    pedirGps(); ultimo = ""; atualizar();
+  };
+  rodape.append(iniciar);
+  return true;  // mostra o mapa
+}
+
+// Em rota: uma entrega por vez.
+function telaEntrega(d, tela) {
+  const naRua = d.paradas.filter((p) => p.saiu);
+  const p = naRua[0];
+  const chave = "total:" + (p.viagem || "rota");
+  const total = Math.max(Number(ler(chave)) || 0, naRua.length);
+  guardar(chave, String(total));
+  const n = total - naRua.length + 1;
+  const telefone = (p.telefone || "").replace(/\D/g, "");
+  const cartao = el("div", {className: "cartao"},
+    el("div", {className: "rot", textContent: "Entrega " + n + " de " + total}),
+    el("div", {className: "grande", textContent: "📍 " + p.endereco}),
+    p.complemento ? el("div", {className: "destaque", textContent: p.complemento}) : null,
+    p.referencia ? el("div", {className: "meio", textContent: "Ref.: " + p.referencia}) : null,
+    el("div", {className: "meio", textContent: (p.cliente ? "👤 " + p.cliente + " · " : "") + "Pedido " + p.rotulo}),
+    el("div", {className: "suave", textContent: "⏱️ ~" + p.minutos + " min até lá"}),
+    el("a", {className: "botao azul", href: mapsAte(p), target: "_blank", rel: "noopener", textContent: "🗺️ ABRIR NO MAPS"}),
+    telefone.length >= 10 ? el("a", {className: "botao claro", href: "tel:+55" + telefone, textContent: "📞 Ligar para o cliente"}) : null,
+    botaoEntreguei(p));
+  tela.append(cartao);
+  const proximas = naRua.slice(1);
+  const depois = d.paradas.length - naRua.length;
+  if (proximas.length || depois) {
+    const lista = el("div", {className: "cartao"}, el("div", {className: "rot", textContent: "Depois"}));
+    proximas.forEach((q, i) => lista.append(el("div", {className: "meio", textContent: (n + i + 1) + ". " + q.endereco + (q.cliente ? " — " + q.cliente : "")})));
+    if (depois) lista.append(el("div", {className: "suave", textContent: "↩ Volte ao restaurante para pegar mais " + plural(depois, "entrega", "entregas") + "."}));
+    tela.append(lista);
+  }
+  const alternar = el("button", {className: "linkzinho", textContent: verMapa ? "Esconder mapa" : "Ver mapa da rota"});
+  alternar.onclick = () => { verMapa = !verMapa; ultimo = ""; atualizar(); };
+  tela.append(alternar);
+  return verMapa;
+}
+
+let idsConhecidos = null, tinhaEntregas = false, ultimosCancelados = [];
+function desenhar(d) {
+  $("login").style.display = "none";
+  // Entrega nova na rota: apita, vibra e mostra o aviso.
+  const ids = new Set(d.paradas.map((p) => p.id));
+  if (idsConhecidos) {
+    const novos = d.paradas.filter((p) => !idsConhecidos.has(p.id));
+    if (novos.length) {
+      avisoNovo = "📦 " + (novos.length === 1 ? "Nova entrega: " : "Novas entregas: ") + novos.map((p) => p.rotulo).join(", ");
+      apitar();
+      // Some sozinho depois de 1 minuto.
+      clearTimeout(window.tempoAviso);
+      window.tempoAviso = setTimeout(() => { avisoNovo = null; desenharAvisos(ultimosCancelados); }, 60000);
+    }
+  }
+  idsConhecidos = ids;
+  if (tinhaEntregas && !d.paradas.length) perguntar = true;
+  if (d.paradas.length) perguntar = false;
+  tinhaEntregas = d.paradas.length > 0;
+  ultimosCancelados = d.cancelados;
+  if (!d.paradas.length) avisoNovo = null;
+  desenharAvisos(d.cancelados);
+
+  const emRota = d.paradas.length && d.paradas[0].saiu;
+  const pil = $("pilula");
+  pil.className = "pilula " + (emRota ? "rota" : d.ativo ? "livre" : "fora");
+  pil.textContent = emRota ? "🚴 Em rota" : d.paradas.length ? "📦 Retirar pedidos" : d.ativo ? "🟢 Disponível" : "⚪ Fora de turno";
+
+  const tela = $("tela"), rodape = $("rodape");
+  tela.innerHTML = ""; rodape.innerHTML = "";
+  let comMapa = false;
+  if (!d.paradas.length) telaSemEntregas(d, tela, rodape);
+  else if (!emRota) comMapa = telaRotaPlanejada(d, tela, rodape);
+  else comMapa = telaEntrega(d, tela);
+  rodape.style.display = rodape.childNodes.length ? "block" : "none";
+  $("mapaBox").style.display = comMapa ? "block" : "none";
+  if (comMapa) desenharMapa(d);
+  $("rodapeInfo").textContent = "Hoje: " + plural(d.hoje.entregas, "entrega", "entregas") + (gpsLigado ? " · 📍 localização ligada" : "");
+  vigiarPosicao(emRota);
+}
+
+// ---------------------------------------------------------------------
+// Localização: ligada sozinha enquanto ele está em rota (o restaurante vê onde ele
+// está e o despacho calcula melhor quando ele volta). Envia no máximo a cada 30 s.
+// ---------------------------------------------------------------------
+let vigia = null, ultimoEnvio = 0, gpsLigado = false;
+function pedirGps() { guardar("gps:" + id, "sim"); }
+function vigiarPosicao(emRota) {
+  const querer = emRota && navigator.geolocation;
+  if (!querer) { if (vigia !== null) { navigator.geolocation.clearWatch(vigia); vigia = null; gpsLigado = false; } return; }
+  if (vigia !== null) return;
+  vigia = navigator.geolocation.watchPosition((pos) => {
+    gpsLigado = true;
+    const agora = Date.now();
+    if (parado || agora - ultimoEnvio < 30000) return;
+    ultimoEnvio = agora;
+    chamar("/rotas/" + encodeURIComponent(id) + "/posicao", "POST", {lat: pos.coords.latitude, lng: pos.coords.longitude}).catch(() => {});
+  }, () => { gpsLigado = false; }, {enableHighAccuracy: true, maximumAge: 20000, timeout: 30000});
+}
+
+// ---------------------------------------------------------------------
+// Atualização: a cada 5 s, só com a tela ligada.
+// ---------------------------------------------------------------------
+let ultimo = "", parado = false;
+async function atualizar() {
+  if (parado || document.hidden) return;
+  if (!id || !codigo) { mostrarLogin(); return; }
+  try {
+    const resp = await chamar("/rotas/" + encodeURIComponent(id));
     if (resp.status === 401 || resp.status === 429) {
       // Para de tentar sozinho: repetir com o código errado bloquearia o celular por excesso de erros.
-      parado = true; ultimo = ""; camada.clearLayers(); document.getElementById("paradas").innerHTML = "";
-      if (resp.status === 401) guardarCodigo(id, "");  // esquece o código errado guardado no celular
-      let txt = "Nome ou código incorretos. Confira e clique em Ver rota.";
+      parado = true;
+      if (resp.status === 401) guardar("codigo:" + id, null);
+      let txt = "Nome ou código incorretos. Peça o link de novo ao restaurante.";
       if (resp.status === 429) { try { txt = (await resp.json()).detail; } catch (e) {} }
-      document.getElementById("msg").textContent = txt; return;
+      mostrarLogin(txt); return;
     }
     const texto = await resp.text();
     if (texto !== ultimo) { ultimo = texto; desenhar(JSON.parse(texto)); }
-  } catch (e) { ultimo = ""; document.getElementById("msg").textContent = "Sem conexão com a API."; }
+  } catch (e) { ultimo = ""; $("rodapeInfo").textContent = "⚠ Sem conexão. Tentando de novo..."; }
 }
 atualizar(); setInterval(atualizar, 5000);
-// Ao voltar para a página, atualiza na hora em vez de esperar os 5 s.
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { ultimo = ""; atualizar(); } });
 </script>
 </body>

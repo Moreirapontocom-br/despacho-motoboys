@@ -43,13 +43,21 @@ rota no celular, com mapa, navegação pelo Google Maps e botão de "Entregue".
   no WhatsApp dele. Controle de turno
 - Funciona em computador (até 3 colunas lado a lado), tablet e celular
 
-**Página do motoboy** (`/motoboy?id=NOME#codigo=CODIGO`)
-- Cartão grande com a **próxima entrega** e os botões principais
-- Botão **"Saí do restaurante"**: a partir daí, pedidos novos ficam para a volta dele
-- Rota do dia no mapa, na ordem certa
-- Botões para navegar, ligar para o cliente e marcar como entregue
-- Aviso na tela (e vibração) quando um pedido é cancelado
-- Envio opcional da posição do GPS, para o despacho saber onde ele está
+**Página do motoboy** (`/m/NOME`)
+- Link curto: o restaurante manda `/m/NOME#codigo=CODIGO` (ou mostra o QR Code) uma vez.
+  Depois disso o link `/m/NOME` sozinho já entra, e dá para **adicionar à tela inicial**
+  do celular como um aplicativo. Links antigos (`/motoboy?id=NOME`) continuam valendo
+- **Rota planejada**: Restaurante (retirar #1, #2, #3) → cada entrega com nome do cliente,
+  endereço, tempo estimado e "Navegar até aqui", mais o mapa. Botão grande **INICIAR ROTA**
+- **Uma entrega por vez**: "Entrega 1 de 3", endereço grande, complemento em destaque,
+  cliente e número do pedido, **ABRIR NO MAPS**, ligar para o cliente e **ENTREGUEI**
+  (toque duplo, para não marcar sem querer). Depois passa sozinho para a próxima
+- **Disponível / fora de turno**: ao terminar, pergunta "Você está disponível para outra
+  rota?". O próprio motoboy liga ou encerra o turno, e o painel vê na hora
+- **Entrega nova**: apita, vibra e mostra um aviso. Pedido cancelado também avisa
+- **Localização**: ligada sozinha enquanto ele está em rota (envio a cada 30 s). O painel
+  mostra "📍 há 20 s" ao lado do motoboy, e o mapa dele mostra "Você"
+- Rodapé com as entregas que ele fez hoje
 
 ## Como o despacho escolhe o motoboy
 

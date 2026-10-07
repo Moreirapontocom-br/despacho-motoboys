@@ -227,8 +227,11 @@
     <input id="rapido" placeholder="📍 Cole ou digite o endereço do cliente (ex.: Rua São Paulo, 123 - Centro)" autocomplete="off" style="font-size:1.02rem;padding:10px">
    </div>
    <div class="linha">
+    <input id="cliente" placeholder="Nome do cliente (opcional)" maxlength="80">
     <input id="telefone" placeholder="Telefone (opcional)" inputmode="tel" maxlength="16">
-    <button id="buscar">Buscar</button>
+   </div>
+   <div class="linha">
+    <button id="buscar" style="flex:1">Buscar</button>
     <button id="limpar" class="claro">Limpar</button>
    </div>
    <details id="maisDetalhes"><summary class="ajuda" style="cursor:pointer">Complemento e referência (opcional)</summary>
@@ -455,7 +458,7 @@ function lerEndereco() {
   preencherDoRapido();
   const v = (i) => $(i).value.trim().replace(/\s+/g, " ");
   const e = {rua: v("rua"), numero: $("semNumero").checked ? "S/N" : v("numero"), bairro: v("bairro"),
-             complemento: v("complemento"), referencia: v("referencia"), cep: v("cep"), telefone: v("telefone")};
+             complemento: v("complemento"), referencia: v("referencia"), cep: v("cep"), telefone: v("telefone"), cliente: v("cliente")};
   const partesCidade = (v("cidade") || CONFIG.cidade).split(",");
   e.cidade = (partesCidade[0] || "").trim();
   e.estado = (partesCidade[1] || "").trim();
@@ -473,7 +476,7 @@ function lerEndereco() {
 let editandoId = null, editandoRotulo = "";  // pedido sendo corrigido, ou null quando é pedido novo
 
 function limparFormulario() {
-  ["rapido", "rua", "numero", "bairro", "complemento", "referencia", "cep", "telefone"].forEach((i) => $(i).value = "");
+  ["rapido", "rua", "numero", "bairro", "complemento", "referencia", "cep", "telefone", "cliente"].forEach((i) => $(i).value = "");
   $("semNumero").checked = false; $("numero").disabled = false;
   $("maisDetalhes").open = false; $("detalhado").open = false;
   rapidoMudou = false;
@@ -496,6 +499,7 @@ function editarPedido(p) {
   $("referencia").value = p.referencia || "";
   $("cep").value = p.cep || "";
   $("telefone").value = p.telefone || "";
+  $("cliente").value = p.cliente || "";
   $("detalhado").open = true; $("maisDetalhes").open = !!(p.complemento || p.referencia);
   $("tituloPedido").textContent = "Corrigindo pedido " + editandoRotulo;
   $("avisoEdicao").textContent = "Mudou o endereço? Clique em Buscar. Senão, confira o pino e clique em Salvar alterações.";
@@ -562,7 +566,7 @@ $("confirmar").onclick = async () => {
   const ponto = pino.getLatLng();
   $("confirmar").disabled = true;
   const corpo = {endereco: e.endereco, lat: ponto.lat, lng: ponto.lng, rua: e.rua, numero: e.numero, bairro: e.bairro,
-                 complemento: e.complemento, referencia: e.referencia, cep: e.cep, telefone: e.telefone};
+                 complemento: e.complemento, referencia: e.referencia, cep: e.cep, telefone: e.telefone, cliente: e.cliente};
   try {
     if (editandoId) {
       await api("/pedidos/" + encodeURIComponent(editandoId), "PUT", corpo);
@@ -607,7 +611,7 @@ function cartaoPedido(p) {
   const rot = el("button", {className: "rotulo", textContent: p.rotulo, title: "Ver no mapa", onclick: () => focarNoMapa(p.id)});
   caixa.append(el("div", {className: "topo"}, rot, el("span", {className: "hora", textContent: p.hora ? "feito às " + p.hora : ""}), tag));
   caixa.append(el("div", {className: "endereco", textContent: p.endereco}));
-  const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : "", p.telefone ? "Tel.: " + p.telefone : ""].filter(Boolean).join(" · ");
+  const extras = [p.cliente ? "👤 " + p.cliente : "", p.complemento, p.referencia ? "Ref.: " + p.referencia : "", p.telefone ? "Tel.: " + p.telefone : ""].filter(Boolean).join(" · ");
   if (extras) caixa.append(el("div", {className: "extra", textContent: extras}));
   if (pendente) {
     // Dicas de agrupamento: ajudam a decidir se vale esperar ou mandar agora.
@@ -873,8 +877,19 @@ function pinHtml(texto, classe, cor) {
   if (cor) d.style.background = cor;
   return d.outerHTML;
 }
+// Um "chip" por motoboy de turno: situação, pedidos, km, quando fica livre e GPS.
+// Redesenhado a cada atualização (o "há 20 s" muda); clique mostra a rota no mapa.
+function desenharChips() {
+  const chips = $("chipsMoto"); chips.innerHTML = "";
+  listaMotoboys.filter((m) => m.ativo || paradasDe(m.id).length).forEach((m) => {
+    chips.append(el("button", {className: "chip", onclick: () => focarMotoboy(m)},
+      el("span", {className: "bolinha", style: "background:" + corDe(m.id)}), el("strong", {textContent: m.id}),
+      el("span", {className: "st", textContent: textoSituacao(m)})));
+  });
+}
 function desenharMapa() {
   iniciarMapa();
+  desenharChips();
   const assinatura = JSON.stringify([pedidosAtuais.map((p) => [p.id, p.lat, p.lng, p.status, p.motoboy_id, p.ordem, p.atrasado]),
                                      listaMotoboys.map((m) => [m.id, m.gps_lat, m.gps_lng, m.situacao, m.km_rota, m.minutos_livre, m.ativo])]);
   if (assinatura === ultimoMapa) return;
@@ -915,13 +930,6 @@ function desenharMapa() {
   // Enquadra sozinho só na primeira vez; depois, quem manda no zoom é a pessoa.
   if (!jaEnquadrou && pontos.length > 1) { mapaOp.fitBounds(pontos, {padding: [30, 30], maxZoom: 16}); jaEnquadrou = true; }
 
-  // Um "chip" por motoboy de turno: situação, pedidos, km e quando fica livre. Clique mostra a rota.
-  const chips = $("chipsMoto"); chips.innerHTML = "";
-  listaMotoboys.filter((m) => m.ativo || paradasDe(m.id).length).forEach((m) => {
-    chips.append(el("button", {className: "chip", onclick: () => focarMotoboy(m)},
-      el("span", {className: "bolinha", style: "background:" + corDe(m.id)}), el("strong", {textContent: m.id}),
-      el("span", {className: "st", textContent: textoSituacao(m)})));
-  });
   const leg = $("legenda"); leg.innerHTML = "";
   leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--verde)"}), document.createTextNode("Restaurante")));
   leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:#f97316"}), document.createTextNode("Pedido aguardando")));
@@ -938,6 +946,8 @@ function textoSituacao(m) {
   let t = SITUACAO[m.situacao] || "";
   if (ps.length) t += " · " + ps.length + (ps.length === 1 ? " pedido" : " pedidos") + " · ~" + m.km_rota + " km";
   if (m.minutos_livre) t += " · livre em ~" + m.minutos_livre + " min";
+  if (m.gps_ativo && m.gps_segundos !== null)
+    t += " · 📍 " + (m.gps_segundos < 60 ? "há " + m.gps_segundos + " s" : "há " + Math.round(m.gps_segundos / 60) + " min");
   return t;
 }
 // Cartão do motoboy (popup do mapa): situação e as paradas na ordem.
@@ -1039,14 +1049,14 @@ $("salvarMoto").onclick = async () => {
     if (!centro) throw new Error("Entre com a chave primeiro.");
     await api("/motoboys", "POST", {id: nome, codigo: codigo, lat: centro.lat, lng: centro.lng, telefone: tel || null, tipo: $("motoTipo").value});
     // O código vai depois do "#": essa parte do link não é enviada ao servidor.
-    const link = location.origin + "/motoboy?id=" + encodeURIComponent(nome) + "#codigo=" + encodeURIComponent(codigo);
+    const link = location.origin + "/m/" + encodeURIComponent(nome) + "#codigo=" + encodeURIComponent(codigo);
     const msg = $("msgMoto"); msg.className = "ok"; msg.textContent = nome + " salvo! Envie o link ou mostre o QR Code para ele: " + link + " ";
     const copiar = el("button", {textContent: "Copiar link", className: "mini"});
     copiar.onclick = async () => { try { await navigator.clipboard.writeText(link); copiar.textContent = "Copiado!"; } catch (e) { copiar.textContent = "Copie à mão"; } };
     msg.append(copiar);
     if (digitos.length >= 10) {
       const texto = "Olá " + nome + "! Este é o seu acesso às entregas" + (restauranteNome ? " do " + restauranteNome : "") +
-                    ". Abra no celular e salve nos favoritos: " + link;
+                    ". Abra no celular e, no menu do navegador, toque em \"Adicionar à tela inicial\": depois é só abrir pelo ícone. " + link;
       msg.append(" ", el("a", {className: "zap", textContent: "Enviar no WhatsApp", target: "_blank", rel: "noopener",
                                href: "https://wa.me/55" + digitos + "?text=" + encodeURIComponent(texto)}));
     }
