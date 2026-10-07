@@ -90,7 +90,7 @@
  .extra{font-size:.85rem;color:#555}
  .acoes{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center}
  .acoes select{padding:5px;max-width:140px}
- a.zap{padding:4px 9px;border-radius:6px;background:#16a34a;color:#fff;text-decoration:none;font-size:.85rem}
+ a.zap{padding:4px 9px;border-radius:6px;background:#16a34a;color:#fff;text-decoration:none;font-size:.85rem;display:inline-block;word-break:normal;white-space:nowrap;margin-top:4px}
  .bolinha{display:inline-block;width:10px;height:10px;border-radius:50%;flex-shrink:0}
  .vazio{color:var(--suave);padding:6px 0}
 
@@ -114,6 +114,48 @@
  .detalheMoto{font-size:.82rem;color:var(--suave);font-weight:400}
  .gps{font-size:.75rem;background:#d1fae5;color:#065f46;padding:1px 6px;border-radius:8px;font-weight:600}
  #msgMoto{word-break:break-all}
+
+ /* Situação dos pedidos (verde / amarelo / vermelho) */
+ .cartao.verde-c{border-color:#a7f3d0} .cartao.verde-c .num{color:var(--verde)}
+ .cartao.amarelo-c{border-color:#fde68a} .cartao.amarelo-c .num{color:#b45309}
+ .cartao.amarelo-c.alerta{background:var(--amarelo);color:#92400e;border-color:#fcd34d}
+ .pedido.atencao{border-left-color:#f59e0b;background:#fffbeb}
+ .tag.atencao{background:#fde68a;color:#92400e;font-weight:700}
+ .dica{font-size:.82rem;margin-top:4px;padding:4px 8px;border-radius:6px;display:inline-block}
+ .dica.aguarda{background:#fef3c7;color:#92400e}
+ .dica.junto{background:#dbeafe;color:#1e40af}
+ .dica.longe{background:#f3f4f6;color:#374151}
+
+ /* Modo de despacho */
+ #barraModo{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 16px 0}
+ .seg{display:inline-flex;border:1px solid #cfd4dc;border-radius:8px;overflow:hidden;background:#fff}
+ .seg button{background:#fff;color:var(--texto);border-radius:0;padding:6px 12px;border-right:1px solid #e5e7eb}
+ .seg button:last-child{border-right:0}
+ .seg button.sel{background:var(--escuro);color:#fff}
+ #infoAuto{font-size:.85rem;color:var(--suave)}
+ #regras{display:none;margin:8px 16px 0;background:#fff;border:1px solid var(--borda);border-radius:var(--raio);padding:12px}
+ #regras .linha label{display:flex;flex-direction:column;gap:3px;font-size:.85rem;flex:1;min-width:150px}
+ #regras input{width:100%}
+
+ /* Sugestão (modo assistido) */
+ #sugestao{display:none;margin:10px 16px 0;background:#fff;border:2px solid var(--verde);border-radius:var(--raio);padding:12px}
+ #sugestao h3{margin:0 0 8px;font-size:1rem}
+ .sug-moto{border:1px solid var(--borda);border-radius:8px;padding:8px 10px;margin-bottom:8px}
+ .sug-moto .quem{font-weight:700;display:flex;align-items:center;gap:6px}
+ .sug-viagem{font-size:.9rem;margin:4px 0 0 16px}
+ .sug-viagem .antigo{color:var(--suave)}
+ .economia{background:#ecfdf5;color:#065f46;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-weight:600}
+
+ /* Estatísticas */
+ .estat{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin:8px 0}
+ .estat .cartao .num{font-size:1.2rem}
+ .var{font-size:.75rem;font-weight:600}
+ .var.bom{color:var(--verde)} .var.ruim{color:var(--vermelho)}
+ table.motos{width:100%;border-collapse:collapse;font-size:.85rem}
+ table.motos th,table.motos td{padding:5px 4px;border-top:1px solid var(--borda);text-align:right}
+ table.motos th:first-child,table.motos td:first-child{text-align:left}
+ .tabela{overflow-x:auto}
+ #qrMoto img{display:block;margin:8px 0;image-rendering:pixelated}
 </style>
 </head>
 <body>
@@ -131,12 +173,38 @@
  <div class="cartoes">
   <div class="cartao"><div class="num" id="rPendentes">—</div><div class="rot">Na fila</div></div>
   <div class="cartao"><div class="num" id="rEmRota">—</div><div class="rot">Em rota</div></div>
-  <div class="cartao" id="cAtrasados"><div class="num" id="rAtrasados">—</div><div class="rot">Atrasados</div></div>
+  <div class="cartao verde-c"><div class="num" id="rNoPrazo">—</div><div class="rot">🟢 No prazo</div></div>
+  <div class="cartao amarelo-c" id="cAtencao"><div class="num" id="rAtencao">—</div><div class="rot">🟡 Atenção</div></div>
+  <div class="cartao" id="cAtrasados"><div class="num" id="rAtrasados">—</div><div class="rot">🔴 Atrasados</div></div>
   <div class="cartao"><div class="num" id="rEntregues">—</div><div class="rot">Entregues hoje</div></div>
   <div class="cartao"><div class="num" id="rTempo">—</div><div class="rot">Tempo médio</div></div>
  </div>
  <button id="despachar">Despachar agora</button>
 </div>
+<div id="barraModo">
+ <span class="ajuda" style="margin:0">Despacho:</span>
+ <div class="seg" id="seletorModo">
+  <button data-modo="manual" title="O funcionário aperta o botão e o sistema distribui na hora">Manual</button>
+  <button data-modo="assistido" title="O botão mostra a sugestão antes; o funcionário só confirma">Assistido</button>
+  <button data-modo="automatico" title="O sistema despacha sozinho, seguindo as regras">Automático</button>
+ </div>
+ <button id="abrirRegras" class="claro mini">Regras</button>
+ <span id="infoAuto"></span>
+</div>
+<div id="regras">
+ <div class="linha">
+  <label>Máximo de entregas por viagem<input id="rgMaxParadas" type="number" min="1" max="10"></label>
+  <label>Não mandar sozinho além de (km, 0 = sem limite)<input id="rgRaio" type="number" min="0" max="50" step="0.5"></label>
+ </div>
+ <div class="linha">
+  <label>Pedido sozinho espera um parceiro por (min, 0 = não espera)<input id="rgEspera" type="number" min="0" max="30"></label>
+  <label>Pedido esperando há mais de (min) sai na hora<input id="rgPrioridade" type="number" min="1" max="120"></label>
+ </div>
+ <div class="ajuda">As regras de raio e espera valem para o despacho automático. O botão "Despachar" sempre despacha todos os pedidos da fila.</div>
+ <div class="linha"><button id="salvarRegras" class="verde">Salvar regras</button><button id="fecharRegras" class="claro">Fechar</button></div>
+ <div id="msgRegras"></div>
+</div>
+<div id="sugestao"></div>
 <div id="msgDespacho"></div>
 
 <main class="grade">
@@ -180,16 +248,30 @@
   <section>
    <h2>Motoboys <span class="contador" id="contMoto">0</span></h2>
    <ul id="listaMoto"></ul>
-   <div class="linha" style="margin-top:10px">
-    <input id="motoNome" placeholder="Nome (ex.: Carlos)">
+   <h2 style="margin-top:12px">+ Adicionar motoboy</h2>
+   <div class="linha">
+    <input id="motoNome" placeholder="Nome (ex.: João)">
+    <input id="motoTel" placeholder="WhatsApp (31) 99999-9999" inputmode="tel" maxlength="16">
    </div>
    <div class="linha">
-    <input id="motoCodigo" placeholder="Código (mínimo 6)">
-    <button id="gerarCodigo" class="claro" title="Cria um código aleatório e difícil de adivinhar">Gerar</button>
+    <select id="motoTipo" style="flex:1"><option value="proprio">🛵 Próprio</option><option value="terceirizado">🛵 Terceirizado</option></select>
     <button id="salvarMoto">Salvar</button>
    </div>
-   <div class="ajuda">Nome já existente: o código dele é trocado. Maiúsculas e minúsculas contam. Motoboy novo entra "De turno".</div>
+   <details><summary class="ajuda" style="cursor:pointer">Código de acesso (opcional)</summary>
+    <div class="linha" style="margin-top:6px">
+     <input id="motoCodigo" placeholder="Deixe vazio para gerar sozinho">
+     <button id="gerarCodigo" class="claro" title="Cria um código aleatório e difícil de adivinhar">Gerar</button>
+    </div>
+   </details>
+   <div class="ajuda">O motoboy recebe um link (e QR Code) para abrir a rota dele. Nome já existente: o acesso antigo dele para de funcionar e vale o link novo. Motoboy novo entra "De turno".</div>
    <div id="msgMoto"></div>
+   <div id="qrMoto"></div>
+  </section>
+
+  <section>
+   <h2>Estatísticas <span class="espaco" style="flex:1"></span>
+    <select id="periodoEstat" style="padding:4px"><option value="1">Hoje</option><option value="7">7 dias</option><option value="30">30 dias</option></select></h2>
+   <div id="estat"><div class="vazio">—</div></div>
   </section>
 
   <section>
@@ -222,6 +304,8 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<!-- QR Code do link do motoboy (qrcode-generator 1.4.4, licença MIT). integrity = hash do arquivo publicado no npm. -->
+<script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin=""></script>
 <script>
 /*__CONFIG__*/
 const $ = (i) => document.getElementById(i);
@@ -271,13 +355,17 @@ $("semNumero").onchange = () => {
   $("numero").disabled = sn;
   if (sn) $("numero").value = "";
 };
-$("telefone").oninput = () => {
-  const d = $("telefone").value.replace(/\D/g, "").slice(0, 11);
-  let t = d;
-  if (d.length > 2) t = "(" + d.slice(0, 2) + ") " + d.slice(2);
-  if (d.length > 6) t = "(" + d.slice(0, 2) + ") " + d.slice(2, d.length - 4) + "-" + d.slice(d.length - 4);
-  $("telefone").value = t;
-};
+function mascaraTelefone(campo) {
+  campo.oninput = () => {
+    const d = campo.value.replace(/\D/g, "").slice(0, 11);
+    let t = d;
+    if (d.length > 2) t = "(" + d.slice(0, 2) + ") " + d.slice(2);
+    if (d.length > 6) t = "(" + d.slice(0, 2) + ") " + d.slice(2, d.length - 4) + "-" + d.slice(d.length - 4);
+    campo.value = t;
+  };
+}
+mascaraTelefone($("telefone"));
+mascaraTelefone($("motoTel"));
 $("cep").oninput = () => {
   const d = $("cep").value.replace(/\D/g, "").slice(0, 8);
   $("cep").value = d.length > 5 ? d.slice(0, 5) + "-" + d.slice(5) : d;
@@ -413,17 +501,26 @@ const escolhas = {};               // pedido -> motoboy escolhido no seletor (so
 
 function cartaoPedido(p) {
   const pendente = p.status === "pendente";
-  const caixa = el("div", {className: "pedido" + (pendente ? " pendente" : "") + (p.atrasado ? " atrasado" : "")});
-  if (!pendente) caixa.style.borderLeftColor = corDe(p.motoboy_id);
+  const caixa = el("div", {className: "pedido" + (pendente ? " pendente" : "") + (p.situacao === "atencao" ? " atencao" : "") + (p.atrasado ? " atrasado" : "")});
+  if (!pendente && p.situacao === "ok") caixa.style.borderLeftColor = corDe(p.motoboy_id);
 
-  const tag = el("span", {className: "tag" + (p.atrasado ? " atrasado" : "")});
-  if (pendente) tag.textContent = p.atrasado ? "esperando há " + p.minutos + " min" : "na fila há " + (p.minutos || 0) + " min";
-  else tag.textContent = "parada " + p.ordem + (p.atrasado ? " · em rota há " + p.minutos + " min" : "");
+  const tag = el("span", {className: "tag" + (p.atrasado ? " atrasado" : p.situacao === "atencao" ? " atencao" : "")});
+  if (pendente) tag.textContent = (p.atrasado ? "🔴 esperando há " : p.situacao === "atencao" ? "🟡 na fila há " : "na fila há ") + (p.minutos || 0) + " min";
+  else tag.textContent = "parada " + p.ordem + (p.saiu ? " · saiu" : "") + (p.situacao !== "ok" ? " · em rota há " + p.minutos + " min" : "");
   const rot = el("button", {className: "rotulo", textContent: p.rotulo, title: "Ver no mapa", onclick: () => focarNoMapa(p.id)});
   caixa.append(el("div", {className: "topo"}, rot, el("span", {className: "hora", textContent: p.hora ? "feito às " + p.hora : ""}), tag));
   caixa.append(el("div", {className: "endereco", textContent: p.endereco}));
   const extras = [p.complemento, p.referencia ? "Ref.: " + p.referencia : "", p.telefone ? "Tel.: " + p.telefone : ""].filter(Boolean).join(" · ");
   if (extras) caixa.append(el("div", {className: "extra", textContent: extras}));
+  if (pendente) {
+    // Dicas de agrupamento: ajudam a decidir se vale esperar ou mandar agora.
+    if (p.agrupar_com && p.agrupar_com.length)
+      caixa.append(el("div", {className: "dica junto", textContent: "🟢 Pode ir junto com " + p.agrupar_com.join(", ")}));
+    else if (p.aguardando)
+      caixa.append(el("div", {className: "dica aguarda", textContent: "🟡 Aguardando agrupamento: sozinho na região" + (modoAtual === "automatico" ? ", espera um parceiro antes de sair" : "")}));
+    if (p.longe)
+      caixa.append(el("div", {className: "dica longe", textContent: "📍 " + p.km + " km do restaurante: o automático não manda, escolha um motoboy"}));
+  }
 
   const acoes = el("div", {className: "acoes"});
   if (pendente) {
@@ -476,11 +573,12 @@ async function carregarFila(automatico) {
     const r = await api("/pedidos");
     restauranteNome = r.restaurante_nome || "";
     pedidosAtuais = r.pedidos;
+    mostrarModo(r.modo, r.automatico);
     avisarAtrasos(r.pedidos);
     desenharMapa();
     const foco = document.activeElement;
     if (automatico && foco && foco.tagName === "SELECT" && $("fila").contains(foco)) return;
-    const assinatura = JSON.stringify([r.pedidos, listaMotoboys.map((m) => [m.id, m.ativo])]);
+    const assinatura = JSON.stringify([r.pedidos, r.modo, listaMotoboys.map((m) => [m.id, m.ativo])]);
     if (automatico && assinatura === ultimaFila) return;
     ultimaFila = assinatura;
 
@@ -516,25 +614,121 @@ function avisarAtrasos(pedidos) {
   const faixa = $("alertaAtraso");
   faixa.style.display = avisos.length ? "block" : "none";
   faixa.textContent = avisos.length ? "⚠ " + avisos.join(" · ") + "." : "";
+  const atencao = pedidos.filter((p) => p.situacao === "atencao").length;
   $("rAtrasados").textContent = atrasados.length;
+  $("rAtencao").textContent = atencao;
+  $("rNoPrazo").textContent = pedidos.length - atrasados.length - atencao;
   $("cAtrasados").classList.toggle("alerta", atrasados.length > 0);
+  $("cAtencao").classList.toggle("alerta", atencao > 0);
   document.title = atrasados.length ? "(" + atrasados.length + ") ⚠ Atrasados — Painel" : "Painel do restaurante";
 
 }
 
+function mensagemDespacho(r) {
+  if (r.mensagem) { dizer($("msgDespacho"), r.mensagem, "erro"); return; }
+  const partes = Object.entries(r.rotas).map(([m, l]) => m + ": " + l.map((p) => p.num ? "#" + p.num : p.id).join(", "));
+  dizer($("msgDespacho"), partes.length ? "Despachado! " + partes.join(" | ") : "Nada mudou.", "ok");
+}
+
 $("despachar").onclick = async () => {
+  if (modoAtual === "assistido") { verSugestao(); return; }
   $("despachar").disabled = true;
   dizer($("msgDespacho"), "Despachando...");
+  try { mensagemDespacho(await api("/despachar", "POST")); atualizarTudo(); }
+  catch (err) { dizer($("msgDespacho"), err.message, "erro"); }
+  $("despachar").disabled = false;
+};
+
+// ---------------------------------------------------------------------
+// Modo assistido: mostra a sugestão (quem leva o quê e a economia) e o
+// funcionário só confirma. A confirmação grava exatamente o que estava na tela.
+// ---------------------------------------------------------------------
+async function verSugestao() {
+  const caixa = $("sugestao");
+  $("despachar").disabled = true;
+  dizer($("msgDespacho"), "Calculando a melhor distribuição...");
   try {
-    const r = await api("/despachar", "POST");
-    if (r.mensagem) { dizer($("msgDespacho"), r.mensagem, "erro"); }
-    else {
-      const partes = Object.entries(r.rotas).map(([m, l]) => m + ": " + l.map((p) => p.num ? "#" + p.num : p.id).join(", "));
-      dizer($("msgDespacho"), "Despachado! " + partes.join(" | "), "ok");
-    }
-    atualizarTudo();
+    const r = await api("/despachar/previa", "POST");
+    dizer($("msgDespacho"), "");
+    if (r.mensagem) { caixa.style.display = "none"; dizer($("msgDespacho"), r.mensagem, "erro"); return; }
+    caixa.innerHTML = "";
+    caixa.append(el("h3", {textContent: "Sugestão de despacho — " + r.pendentes + " pedido(s) em " + r.viagens + " viagem(ns)"}));
+    if (r.economia_km > 0.05)
+      caixa.append(el("div", {className: "economia", textContent: "Sem agrupar: ~" + r.km_sem + " km · Com agrupamento: ~" + r.km_com +
+                               " km · Economia estimada: ~" + r.economia_km + " km"}));
+    r.sugestoes.forEach((sg) => {
+      const bloco = el("div", {className: "sug-moto"});
+      bloco.append(el("div", {className: "quem"}, el("span", {className: "bolinha", style: "background:" + corDe(sg.motoboy)}),
+                      document.createTextNode("🛵 " + sg.motoboy + " — " + sg.novos + " pedido(s) novo(s)" + (sg.saiu ? " (para quando voltar)" : ""))));
+      sg.viagens.forEach((v, i) => {
+        const linha = el("div", {className: "sug-viagem"});
+        if (sg.viagens.length > 1) linha.append(el("strong", {textContent: (i + 1) + "ª saída: "}));
+        v.pedidos.forEach((p, j) => {
+          if (j) linha.append(document.createTextNode(" → "));
+          linha.append(el("span", {className: p.novo ? "" : "antigo", title: p.endereco,
+                                   textContent: p.rotulo + (p.novo ? "" : " (já tinha)")}));
+        });
+        linha.append(el("span", {className: "hora", textContent: "  ~" + v.km + " km"}));
+        bloco.append(linha);
+      });
+      caixa.append(bloco);
+    });
+    const ok = el("button", {className: "verde", textContent: "Confirmar despacho"});
+    const nao = el("button", {className: "claro", textContent: "Agora não"});
+    ok.onclick = async () => {
+      ok.disabled = true;
+      try { mensagemDespacho(await api("/despachar", "POST", {plano: r.plano})); caixa.style.display = "none"; atualizarTudo(); }
+      catch (err) { dizer($("msgDespacho"), err.message, "erro"); ok.disabled = false; }
+    };
+    nao.onclick = () => { caixa.style.display = "none"; };
+    caixa.append(el("div", {className: "linha"}, ok, nao),
+                 el("div", {className: "ajuda", textContent: "Quilômetros estimados. Ao confirmar, a ordem final das paradas usa as ruas de verdade."}));
+    caixa.style.display = "block";
+    caixa.scrollIntoView({behavior: "smooth", block: "nearest"});
   } catch (err) { dizer($("msgDespacho"), err.message, "erro"); }
   $("despachar").disabled = false;
+}
+
+// ---------------------------------------------------------------------
+// Modo de despacho e regras
+// ---------------------------------------------------------------------
+let modoAtual = "manual", ultimoAuto = null;
+const NOMES_BOTAO = {manual: "Despachar agora", assistido: "Ver sugestão de despacho", automatico: "Despachar tudo agora"};
+function mostrarModo(modo, auto) {
+  modoAtual = modo || "manual";
+  if (auto !== undefined) ultimoAuto = auto;
+  auto = ultimoAuto;
+  document.querySelectorAll("#seletorModo button").forEach((b) => b.classList.toggle("sel", b.dataset.modo === modoAtual));
+  const pend = Number($("rPendentes").textContent) || 0;
+  $("despachar").textContent = NOMES_BOTAO[modoAtual] + (pend ? " (" + pend + ")" : "");
+  let info = "";
+  if (modoAtual === "automatico") info = "🤖 Automático ligado" + (auto && auto.quando ? " · último às " + auto.quando + ": " + auto.texto : " · esperando pedidos");
+  else if (modoAtual === "assistido") info = "O botão mostra a sugestão antes de despachar.";
+  $("infoAuto").textContent = info;
+}
+document.querySelectorAll("#seletorModo button").forEach((b) => {
+  b.onclick = async () => {
+    if (b.dataset.modo === "automatico" && !confirm("Ligar o despacho automático?\nO sistema vai mandar os pedidos sozinho, seguindo as regras.")) return;
+    try { const r = await api("/ajustes", "PUT", {modo: b.dataset.modo}); mostrarModo(r.ajustes.modo); $("sugestao").style.display = "none"; carregarFila(); }
+    catch (err) { dizer($("msgDespacho"), err.message, "erro"); }
+  };
+});
+$("abrirRegras").onclick = async () => {
+  try {
+    const a = (await api("/ajustes")).ajustes;
+    $("rgMaxParadas").value = a.max_paradas; $("rgRaio").value = a.raio_max_km;
+    $("rgEspera").value = a.espera_agrupamento_min; $("rgPrioridade").value = a.prioridade_min;
+    $("regras").style.display = "block"; dizer($("msgRegras"), "");
+  } catch (err) { dizer($("msgDespacho"), err.message, "erro"); }
+};
+$("fecharRegras").onclick = () => { $("regras").style.display = "none"; };
+$("salvarRegras").onclick = async () => {
+  const n = (i) => Number(String($(i).value).replace(",", "."));
+  try {
+    await api("/ajustes", "PUT", {max_paradas: n("rgMaxParadas"), raio_max_km: n("rgRaio"),
+                                  espera_agrupamento_min: n("rgEspera"), prioridade_min: n("rgPrioridade")});
+    dizer($("msgRegras"), "Regras salvas.", "ok"); carregarFila();
+  } catch (err) { dizer($("msgRegras"), "Confira os números: " + err.message, "erro"); }
 };
 
 // ---------------------------------------------------------------------
@@ -634,7 +828,8 @@ async function carregarMotos(automatico) {
     if (!r.motoboys.length) ul.append(el("li", {className: "vazio", textContent: "Nenhum motoboy cadastrado."}));
     r.motoboys.forEach((m) => {
       const nome = el("div", {className: "nomeMoto"}, el("span", {className: "bolinha", style: "background:" + corDe(m.id)}),
-                      document.createTextNode(m.id), el("span", {className: "detalheMoto", textContent: m.paradas + " parada(s)"}));
+                      document.createTextNode(m.id), el("span", {className: "detalheMoto",
+                        textContent: [m.paradas + " parada(s)", m.tipo === "terceirizado" ? "terceirizado" : m.tipo === "proprio" ? "próprio" : "", m.telefone || ""].filter(Boolean).join(" · ")}));
       if (m.gps_ativo) nome.append(el("span", {className: "gps", textContent: "GPS"}));
       const g = el("button", {className: "mini " + (m.ativo ? "on" : "off"), textContent: m.ativo ? "De turno" : "Fora de turno"});
       g.onclick = async () => {
@@ -654,28 +849,47 @@ async function carregarMotos(automatico) {
 }
 
 // Código aleatório sem letras que se confundem (0/O, 1/l/I).
-$("gerarCodigo").onclick = () => {
+$("gerarCodigo").onclick = () => { $("motoCodigo").value = codigoAleatorio(); };
+
+function codigoAleatorio() {
   const letras = "abcdefghjkmnpqrstuvwxyz23456789", n = new Uint32Array(8);
   crypto.getRandomValues(n);
-  $("motoCodigo").value = Array.from(n, (x) => letras[x % letras.length]).join("");
-};
+  return Array.from(n, (x) => letras[x % letras.length]).join("");
+}
 
 $("salvarMoto").onclick = async () => {
-  const nome = $("motoNome").value.trim(), codigo = $("motoCodigo").value.trim();
+  const nome = $("motoNome").value.trim(), tel = $("motoTel").value.trim();
+  let codigo = $("motoCodigo").value.trim();
   if (!nome) { dizer($("msgMoto"), "Digite o nome do motoboy.", "erro"); return; }
-  if (codigo.length < 6) { dizer($("msgMoto"), "O código precisa ter pelo menos 6 caracteres (use o botão Gerar).", "erro"); return; }
+  if (!codigo) codigo = codigoAleatorio();
+  if (codigo.length < 6) { dizer($("msgMoto"), "O código precisa ter pelo menos 6 caracteres (ou deixe vazio).", "erro"); return; }
+  const digitos = tel.replace(/\D/g, "");
+  if (tel && (digitos.length < 10 || digitos.length > 11)) { dizer($("msgMoto"), "WhatsApp incompleto: use DDD + número. Pode deixar vazio.", "erro"); return; }
+  if (listaMotoboys.some((m) => m.id === nome) && !confirm(nome + " já existe. Salvar troca o acesso dele: o link antigo para de funcionar. Continuar?")) return;
   $("salvarMoto").disabled = true;
   try {
     if (!centro) await carregarMotos();
     if (!centro) throw new Error("Entre com a chave primeiro.");
-    await api("/motoboys", "POST", {id: nome, codigo: codigo, lat: centro.lat, lng: centro.lng});
+    await api("/motoboys", "POST", {id: nome, codigo: codigo, lat: centro.lat, lng: centro.lng, telefone: tel || null, tipo: $("motoTipo").value});
     // O código vai depois do "#": essa parte do link não é enviada ao servidor.
     const link = location.origin + "/motoboy?id=" + encodeURIComponent(nome) + "#codigo=" + encodeURIComponent(codigo);
-    const msg = $("msgMoto"); msg.className = "ok"; msg.textContent = "Salvo! Link para enviar ao motoboy: " + link + " ";
+    const msg = $("msgMoto"); msg.className = "ok"; msg.textContent = nome + " salvo! Envie o link ou mostre o QR Code para ele: " + link + " ";
     const copiar = el("button", {textContent: "Copiar link", className: "mini"});
     copiar.onclick = async () => { try { await navigator.clipboard.writeText(link); copiar.textContent = "Copiado!"; } catch (e) { copiar.textContent = "Copie à mão"; } };
     msg.append(copiar);
-    $("motoNome").value = ""; $("motoCodigo").value = "";
+    if (digitos.length >= 10) {
+      const texto = "Olá " + nome + "! Este é o seu acesso às entregas" + (restauranteNome ? " do " + restauranteNome : "") +
+                    ". Abra no celular e salve nos favoritos: " + link;
+      msg.append(" ", el("a", {className: "zap", textContent: "Enviar no WhatsApp", target: "_blank", rel: "noopener",
+                               href: "https://wa.me/55" + digitos + "?text=" + encodeURIComponent(texto)}));
+    }
+    const qr = $("qrMoto"); qr.innerHTML = "";
+    if (typeof qrcode === "function") {
+      const q = qrcode(0, "M"); q.addData(link); q.make();
+      qr.append(el("img", {src: q.createDataURL(5, 2), alt: "QR Code do acesso de " + nome}),
+                el("div", {className: "ajuda", textContent: "O motoboy aponta a câmera do celular para abrir a rota dele. Some quando você recarregar a página."}));
+    }
+    $("motoNome").value = ""; $("motoCodigo").value = ""; $("motoTel").value = "";
     atualizarTudo();
   } catch (err) { dizer($("msgMoto"), err.message, "erro"); }
   $("salvarMoto").disabled = false;
@@ -692,7 +906,7 @@ async function carregarResumo() {
     $("rEmRota").textContent = r.em_rota;
     $("rEntregues").textContent = r.entregues_hoje;
     $("rTempo").textContent = r.tempo_medio_min === null ? "—" : r.tempo_medio_min + " min";
-    $("despachar").textContent = r.pendentes ? "Despachar agora (" + r.pendentes + ")" : "Despachar agora";
+    mostrarModo(modoAtual);
   } catch (e) { /* não interrompe o resto do painel por causa disso */ }
 }
 
@@ -714,6 +928,48 @@ $("baixarHistorico").onclick = async () => {
   $("baixarHistorico").disabled = false;
 };
 
+// ---------------------------------------------------------------------
+// Estatísticas: atualiza a cada minuto (não precisa ser a cada 10 s)
+// ---------------------------------------------------------------------
+function cartaoEstat(valor, rotuloTexto, variacao, menorEhMelhor) {
+  const c = el("div", {className: "cartao"}, el("div", {className: "num", textContent: valor}), el("div", {className: "rot", textContent: rotuloTexto}));
+  if (variacao !== null && variacao !== undefined && variacao !== 0) {
+    const bom = menorEhMelhor ? variacao < 0 : variacao > 0;
+    c.append(el("div", {className: "var " + (bom ? "bom" : "ruim"), textContent: (variacao > 0 ? "▲ " : "▼ ") + Math.abs(variacao) + "%"}));
+  }
+  return c;
+}
+let ultimaEstat = 0;
+async function carregarEstat(forcar) {
+  if (!chave || (!forcar && Date.now() - ultimaEstat < 60000)) return;
+  ultimaEstat = Date.now();
+  try {
+    const r = await api("/estatisticas?dias=" + $("periodoEstat").value);
+    const g = r.geral, cmp = r.comparacao, caixa = $("estat");
+    caixa.innerHTML = "";
+    if (!g.entregas) { caixa.append(el("div", {className: "vazio", textContent: "Nenhuma entrega concluída neste período."})); return; }
+    const fmt = (v, suf) => v === null || v === undefined ? "—" : v + (suf || "");
+    caixa.append(el("div", {className: "estat"},
+      cartaoEstat(g.entregas, "entregas", cmp.entregas, false),
+      cartaoEstat(g.motoboys, "motoboys"),
+      cartaoEstat(g.viagens, "viagens", cmp.viagens_por_entrega, true),
+      cartaoEstat(g.agrupados, "pedidos agrupados"),
+      cartaoEstat("~" + g.km, "km rodados", cmp.km_por_entrega, true),
+      cartaoEstat("~" + g.km_economizados, "km economizados"),
+      cartaoEstat(fmt(g.tempo_medio_min, " min"), "tempo médio", cmp.tempo_medio_min, true),
+      cartaoEstat(fmt(g.no_prazo_pct, "%"), "no prazo (" + Math.round(r.prazo_min) + " min)")));
+    caixa.append(el("div", {className: "ajuda", textContent: "▲▼ comparado com o período anterior (km e viagens por entrega). Km estimados."}));
+    const t = el("table", {className: "motos"});
+    t.append(el("tr", {}, ...["Motoboy", "Entregas", "Viagens", "No prazo", "Em rota", "~km"].map((h) => el("th", {textContent: h}))));
+    r.motoboys.forEach((m) => t.append(el("tr", {},
+      el("td", {}, el("span", {className: "bolinha", style: "background:" + corDe(m.motoboy) + ";margin-right:4px"}), document.createTextNode(m.motoboy)),
+      el("td", {textContent: m.entregas}), el("td", {textContent: m.viagens}), el("td", {textContent: fmt(m.no_prazo_pct, "%")}),
+      el("td", {textContent: fmt(m.tempo_em_rota_min, " min")}), el("td", {textContent: m.km}))));
+    caixa.append(el("div", {className: "tabela"}, t));
+  } catch (e) { /* estatística é extra; o resto do painel segue funcionando */ }
+}
+$("periodoEstat").onchange = () => carregarEstat(true);
+
 async function carregarBairros() {
   if (!chave) return;
   try {
@@ -725,7 +981,7 @@ async function carregarBairros() {
 
 // carregarMotos primeiro: as cores e o seletor de "Atribuir" dependem da lista de motoboys.
 // automatico = true só na atualização periódica; depois de um clique, sempre redesenha.
-async function atualizarTudo(automatico) { await carregarMotos(automatico); await carregarFila(automatico); await carregarResumo(); }
+async function atualizarTudo(automatico) { await carregarMotos(automatico); await carregarFila(automatico); await carregarResumo(); carregarEstat(!automatico); }
 iniciarMapa();
 atualizarTudo();
 carregarBairros();

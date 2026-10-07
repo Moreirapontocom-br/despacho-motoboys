@@ -15,12 +15,23 @@ partes; cada assunto fica no seu próprio arquivo:
     paginas.py       carrega painel.html e motoboy.html
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 import api_motoboy
 import api_painel
 
-app = FastAPI(title="API de Despacho Automático")
+
+@asynccontextmanager
+async def ciclo_de_vida(app):
+    # Laço do despacho automático. Só faz algo quando o modo "automatico" está
+    # ligado no painel. Funciona porque o servidor roda numa única cópia (worker).
+    api_painel.iniciar_despacho_automatico()
+    yield
+
+
+app = FastAPI(title="API de Despacho Automático", lifespan=ciclo_de_vida)
 app.include_router(api_painel.router)
 app.include_router(api_painel.pagina)
 app.include_router(api_motoboy.router)

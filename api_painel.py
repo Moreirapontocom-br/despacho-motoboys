@@ -8,17 +8,20 @@ import csv
 import io
 import secrets
 import threading
-from typing import Optional
+import time
+from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+import ajustes
 import banco
 import despacho
 import paginas
-from config import PEDIDO_ATRASO_MIN, RESTAURANTE, RESTAURANTE_CIDADE, RESTAURANTE_NOME, ROTA_ATRASO_MIN, log
+from config import (AUTOMATICO_INTERVALO_S, PEDIDO_ATRASO_MIN, PRAZO_ENTREGA_MIN, RESTAURANTE, RESTAURANTE_CIDADE,
+                    RESTAURANTE_NOME, ROTA_ATRASO_MIN, log)
 from horarios import agora_utc, fmt_local, gps_recente, inicio_do_dia_utc, para_local, parse_ts
 from mapas import buscar_endereco
 from seguranca import exigir_chave, hash_codigo
@@ -57,6 +60,23 @@ class Motoboy(BaseModel):
     codigo: str = Field(min_length=6, max_length=64)
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
+    telefone: Optional[str] = Field(default=None, max_length=20)
+    tipo: Optional[Literal["proprio", "terceirizado"]] = None
+
+
+class Despacho(BaseModel):
+    """Corpo opcional de /despachar. Sem ele, o sistema decide tudo na hora.
+    Com "plano" (vindo de /despachar/previa), grava exatamente a sugestão que o
+    funcionário viu e confirmou: {motoboy: [[ids da 1ª viagem], [ids da 2ª]...]}."""
+    plano: Optional[Dict[str, List[List[str]]]] = None
+
+
+class Regras(BaseModel):
+    modo: Optional[Literal["manual", "assistido", "automatico"]] = None
+    max_paradas: Optional[int] = Field(default=None, ge=1, le=10)
+    raio_max_km: Optional[float] = Field(default=None, ge=0, le=50)
+    espera_agrupamento_min: Optional[float] = Field(default=None, ge=0, le=30)
+    prioridade_min: Optional[float] = Field(default=None, ge=1, le=120)
 
 
 class Turno(BaseModel):
@@ -173,28 +193,48 @@ def cancelar_pedido(pedido_id: str):
 
 @router.get("/pedidos")
 def listar_pedidos():
-    """Pedidos pendentes e em rota (os concluídos não aparecem), marcados com
-    "atrasado": true quando passam de PEDIDO_ATRASO_MIN na fila ou de ROTA_ATRASO_MIN
-    em rota. "minutos" diz há quanto tempo está na situação atual."""
+    """Pedidos pendentes e em rota (os concluídos não aparecem).
+
+    Para cada pedido:
+      situacao   "ok", "atencao" (passou de 70% do limite) ou "atrasado" (passou de
+                 PEDIDO_ATRASO_MIN na fila ou de ROTA_ATRASO_MIN em rota)
+      minutos    há quanto tempo está na situação atual
+    Só na fila:
+      aguardando  esperando um parceiro de viagem (regra de agrupamento)
+      agrupar_com rótulos dos pedidos a até 2 km, que podem ir na mesma viagem
+      longe       passa do raio máximo do despacho automático"""
     with banco.engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
             "SELECT id, num, endereco, rua, numero, bairro, complemento, referencia, cep, telefone, lat, lng, "
-            "status, motoboy_id, ordem, criado_em, despachado_em FROM pedidos WHERE status IN ('pendente', 'despachado') "
+            "status, motoboy_id, ordem, criado_em, despachado_em, saiu_em FROM pedidos WHERE status IN ('pendente', 'despachado') "
             "ORDER BY status, motoboy_id, ordem, criado_em"))]
+        regras = ajustes.ler(con)
     agora = agora_utc()
+    pendentes = [p for p in linhas if p["status"] == "pendente"]
+    fila = despacho.situacao_fila(pendentes, regras, agora)
+    rotulos = {p["id"]: rotulo(p["num"], p["id"]) for p in linhas}
     for p in linhas:
-        p["rotulo"] = rotulo(p["num"], p["id"])
+        p["rotulo"] = rotulos[p["id"]]
         criado = parse_ts(p.pop("criado_em"))
         despachado = parse_ts(p.pop("despachado_em"))
+        p["saiu"] = bool(p.pop("saiu_em"))
         p["hora"] = para_local(criado).strftime("%H:%M") if criado else ""
         if p["status"] == "pendente":
             desde, limite = criado, PEDIDO_ATRASO_MIN
+            f = fila[p["id"]]
+            p["aguardando"] = f["aguardando"]
+            p["agrupar_com"] = [rotulos[v] for v in f["vizinhos"]]
+            p["longe"] = f["longe"]
+            p["km"] = f["km"]
         else:
             desde, limite = despachado or criado, ROTA_ATRASO_MIN  # pedidos antigos não têm despachado_em
         minutos = (agora - desde).total_seconds() / 60 if desde is not None else None
         p["minutos"] = int(minutos) if minutos is not None else None
         p["atrasado"] = bool(minutos is not None and minutos >= limite)
-    return {"pedidos": linhas, "restaurante_nome": RESTAURANTE_NOME}
+        p["situacao"] = ("atrasado" if p["atrasado"] else
+                         "atencao" if minutos is not None and minutos >= 0.7 * limite else "ok")
+    return {"pedidos": linhas, "restaurante_nome": RESTAURANTE_NOME, "modo": regras["modo"],
+            "automatico": dict(_ultimo_automatico)}
 
 
 @router.get("/bairros")
@@ -236,38 +276,195 @@ def geocodificar(c: Consulta):
 # ---------------------------------------------------------------------
 # Despacho
 # ---------------------------------------------------------------------
+def _ler_pendentes(con):
+    return [dict(r._mapping) for r in con.execute(text(
+        "SELECT id, num, endereco, lat, lng, criado_em FROM pedidos WHERE status = 'pendente' ORDER BY criado_em, id"))]
+
+
+def _planejar(pedidos, estados, regras):
+    """Plano do despacho: {motoboy: [viagem, viagem...]}, cada viagem uma lista de paradas
+    (inclui as paradas antigas de quem ainda não saiu, que vão na mesma viagem)."""
+    lotes = despacho.agrupar_pedidos(pedidos, raio_km=despacho.RAIO_AGRUPAMENTO_KM,
+                                     max_por_lote=min(4, regras["max_paradas"]))
+    return despacho.planejar(lotes, estados, regras["max_paradas"])
+
+
+def _plano_confirmado(plano_ids, pedidos, estados, abertas):
+    """Remonta o plano que o funcionário viu na sugestão, com a situação de AGORA:
+    pedidos que já não estão na fila e paradas já entregues saem; motoboy que
+    saiu do restaurante nesse meio-tempo não reorganiza mais as paradas antigas."""
+    por_id = {p["id"]: p for p in pedidos}
+    plano = {}
+    for mid, viagens_ids in plano_ids.items():
+        if mid not in estados:
+            continue  # saiu de turno ou foi removido: os pedidos dele continuam na fila
+        estado = estados[mid]
+        antigas = {p["id"]: p for p in abertas.get(mid, [])}
+        viagens = []
+        for ids in viagens_ids:
+            viagem = [por_id[i] for i in ids if i in por_id]
+            if not estado["saiu"]:
+                viagem = [antigas[i] for i in ids if i in antigas] + viagem
+            if viagem:
+                viagens.append(viagem)
+        if not viagens:
+            continue
+        # Ainda está no restaurante mas a sugestão não juntava as paradas dele: junta agora.
+        faltando = [p for p in estado["proxima"] if all(p["id"] != q["id"] for q in viagens[0])]
+        viagens[0] = faltando + viagens[0]
+        plano[mid] = viagens
+    return plano
+
+
+def _gravar_plano(plano, estados, abertas, novos_ids):
+    """Ordena as paradas (fora do banco: pode consultar o serviço de rotas) e grava.
+    gravar_rota não desfaz uma entrega marcada pelo motoboy enquanto isso."""
+    rotas = {mid: despacho.montar_rota(viagens) for mid, viagens in plano.items()}
+    resultado = {}
+    with banco.engine.begin() as con:
+        for motoboy_id, viagens in rotas.items():
+            gravadas = despacho.gravar_rota(con, motoboy_id, viagens, estados[motoboy_id]["saiu"],
+                                            abertas.get(motoboy_id, []))
+            novas = [{"id": p["id"], "num": p.get("num"), "endereco": p["endereco"], "lat": p["lat"], "lng": p["lng"]}
+                     for p in gravadas if p["id"] in novos_ids]
+            if novas:
+                resultado[motoboy_id] = novas
+    return resultado
+
+
+def _despachar_sem_trava(somente=None, plano_ids=None):
+    """Despacha os pedidos pendentes (ou só os ids em `somente`). Quem chama já
+    está dentro de despacho.trava_despacho()."""
+    # 1. Lê a situação atual (transação curta, só leitura).
+    with banco.engine.connect() as con:
+        pedidos = _ler_pendentes(con)
+        if somente is not None:
+            pedidos = [p for p in pedidos if p["id"] in somente]
+        if not pedidos:
+            return {"mensagem": "Não há pedidos pendentes para despachar."}
+        estados, abertas = despacho.ler_estados(con)
+        if not estados:
+            return {"mensagem": "Nenhum motoboy de turno agora. Ligue o turno de alguém no painel."}
+        regras = ajustes.ler(con)
+
+    # 2. Planeja (ou usa o plano confirmado) e 3. grava.
+    if plano_ids is not None:
+        plano = _plano_confirmado(plano_ids, pedidos, estados, abertas)
+        if not plano:
+            return {"mensagem": "A sugestão ficou desatualizada (pedidos ou motoboys mudaram). Veja a sugestão de novo."}
+    else:
+        plano = _planejar(pedidos, estados, regras)
+    return {"rotas": _gravar_plano(plano, estados, abertas, {p["id"] for p in pedidos})}
+
+
 @router.post("/despachar")
-def despachar():
+def despachar(corpo: Optional[Despacho] = None):
     """Agrupa os pedidos pendentes, monta as rotas e distribui entre os motoboys.
     Cada grupo vai para quem consegue entregá-lo mais cedo (veja despacho.planejar).
     Se o motoboy escolhido ainda não saiu do restaurante, os novos pedidos entram
-    na mesma viagem e a rota inteira é reorganizada; se já saiu, entram no fim."""
+    na mesma viagem e a rota inteira é reorganizada; se já saiu, entram no fim.
+    Com corpo {"plano": ...} grava a sugestão confirmada no modo assistido."""
     with despacho.trava_despacho():
-        # 1. Lê a situação atual (transação curta, só leitura).
-        with banco.engine.connect() as con:
-            pedidos = [dict(r._mapping) for r in con.execute(text(
-                "SELECT id, num, endereco, lat, lng FROM pedidos WHERE status = 'pendente' ORDER BY criado_em, id"))]
-            if not pedidos:
-                return {"mensagem": "Não há pedidos pendentes para despachar."}
-            estados, abertas = despacho.ler_estados(con)
-            if not estados:
-                return {"mensagem": "Nenhum motoboy de turno agora. Ligue o turno de alguém no painel."}
+        return _despachar_sem_trava(plano_ids=corpo.plano if corpo else None)
 
-        # 2. Planeja e ordena as paradas sem o banco aberto (pode consultar o serviço de rotas).
-        plano = despacho.planejar(despacho.agrupar_pedidos(pedidos), estados)
-        rotas = {mid: despacho.montar_rota(viagens) for mid, viagens in plano.items()}
 
-        # 3. Grava tudo de uma vez (transação curta). gravar_rota não desfaz uma
-        #    entrega marcada pelo motoboy enquanto o passo 2 estava calculando.
-        novos_ids = {p["id"] for p in pedidos}
-        resultado = {}
-        with banco.engine.begin() as con:
-            for motoboy_id, rota in rotas.items():
-                gravadas = despacho.gravar_rota(con, motoboy_id, rota, estados[motoboy_id]["saiu"],
-                                                abertas.get(motoboy_id, []))
-                # Na resposta, só os pedidos novos deste despacho.
-                resultado[motoboy_id] = [p for p in gravadas if p["id"] in novos_ids]
-        return {"rotas": resultado}
+@router.post("/despachar/previa")
+def previa_do_despacho():
+    """Mostra o que o despacho faria agora, sem gravar nada: quem leva o quê, em
+    quantas viagens, e os quilômetros economizados por juntar entregas."""
+    with banco.engine.connect() as con:
+        pedidos = _ler_pendentes(con)
+        if not pedidos:
+            return {"mensagem": "Não há pedidos pendentes para despachar."}
+        estados, abertas = despacho.ler_estados(con)
+        if not estados:
+            return {"mensagem": "Nenhum motoboy de turno agora. Ligue o turno de alguém no painel."}
+        regras = ajustes.ler(con)
+    plano = _planejar(pedidos, estados, regras)
+    novos = {p["id"] for p in pedidos}
+    sugestoes, km_com, viagens_novas = [], 0.0, 0
+    for mid, viagens in plano.items():
+        saida = []
+        for viagem in viagens:
+            # Ordem estimada pela linha reta (rápido); ao confirmar, a ordem usa as ruas.
+            ordem = despacho.ordenar_rota(RESTAURANTE, viagem, usar_ruas=False)
+            antigas = [p for p in ordem if p["id"] not in novos]
+            if len(antigas) == len(ordem):
+                continue
+            # Só conta o que a viagem acrescenta: as paradas antigas já iam acontecer de qualquer jeito.
+            extra = despacho.km_viagem(ordem) - (despacho.km_viagem(despacho.ordenar_rota(RESTAURANTE, antigas, usar_ruas=False))
+                                                 if antigas else 0)
+            km_com += extra
+            viagens_novas += 1
+            saida.append({"km": round(extra, 1), "pedidos": [
+                {"id": p["id"], "rotulo": rotulo(p.get("num"), p["id"]), "endereco": p["endereco"], "novo": p["id"] in novos}
+                for p in ordem]})
+        if saida:
+            sugestoes.append({"motoboy": mid, "saiu": estados[mid]["saiu"], "viagens": saida,
+                              "novos": sum(1 for v in saida for p in v["pedidos"] if p["novo"])})
+    km_sem = despacho.km_individual(pedidos)
+    return {"sugestoes": sugestoes, "pendentes": len(pedidos), "viagens": viagens_novas,
+            "km_com": round(km_com, 1), "km_sem": round(km_sem, 1), "economia_km": round(max(km_sem - km_com, 0), 1),
+            "plano": {mid: [[p["id"] for p in v] for v in viagens] for mid, viagens in plano.items()}}
+
+
+# ---------------------------------------------------------------------
+# Despacho automático (modo "automatico" nos ajustes)
+#
+# Um laço confere a fila a cada AUTOMATICO_INTERVALO_S segundos e despacha os
+# pedidos prontos: os que não estão esperando parceiro de viagem e não passam
+# do raio máximo. Os que passam do raio ficam para o funcionário decidir.
+# ---------------------------------------------------------------------
+_ultimo_automatico = {"quando": None, "texto": ""}
+
+
+def despacho_automatico_uma_vez():
+    """Uma rodada do despacho automático. Devolve o resultado, ou None se não fez nada."""
+    with banco.engine.connect() as con:
+        regras = ajustes.ler(con)
+        if regras["modo"] != "automatico":
+            return None
+        pedidos = _ler_pendentes(con)
+    fila = despacho.situacao_fila(pedidos, regras)
+    prontos = {p["id"] for p in pedidos if not fila[p["id"]]["aguardando"] and not fila[p["id"]]["longe"]}
+    if not prontos:
+        return None
+    try:
+        with despacho.trava_despacho(espera_s=1):
+            r = _despachar_sem_trava(somente=prontos)
+    except HTTPException:
+        return None  # alguém está despachando agora; tenta na próxima rodada
+    if r.get("rotas"):
+        partes = [m + ": " + ", ".join(rotulo(p.get("num"), p["id"]) for p in ps) for m, ps in r["rotas"].items()]
+        _ultimo_automatico.update(quando=para_local(agora_utc()).strftime("%H:%M"), texto=" | ".join(partes))
+    return r
+
+
+def _laco_automatico():
+    while True:
+        time.sleep(AUTOMATICO_INTERVALO_S)
+        try:
+            despacho_automatico_uma_vez()
+        except Exception:
+            log.exception("Falha no despacho automático")
+
+
+def iniciar_despacho_automatico():
+    """Chamado uma vez quando o servidor sobe (api_despacho3.py)."""
+    threading.Thread(target=_laco_automatico, name="despacho-automatico", daemon=True).start()
+
+
+@router.get("/ajustes")
+def ver_ajustes():
+    with banco.engine.connect() as con:
+        return {"ajustes": ajustes.ler(con), "limites": ajustes.LIMITES}
+
+
+@router.put("/ajustes")
+def salvar_ajustes(r: Regras):
+    with banco.engine.begin() as con:
+        novos = ajustes.salvar(con, r.model_dump(exclude_none=True))
+    return {"mensagem": "Ajustes salvos", "ajustes": novos}
 
 
 @router.post("/pedidos/{pedido_id}/atribuir")
@@ -289,9 +486,9 @@ def atribuir_manual(pedido_id: str, corpo: Atribuicao):
         estado = estados[corpo.motoboy_id]
         novo = {"id": pedido[0], "endereco": pedido[1], "lat": pedido[2], "lng": pedido[3]}
         # Escolha manual: sem limite de paradas por viagem, junta tudo se ele ainda não saiu.
-        rota = despacho.montar_rota([estado["proxima"] + [novo]])
+        viagens = despacho.montar_rota([estado["proxima"] + [novo]])
         with banco.engine.begin() as con:
-            rota = despacho.gravar_rota(con, corpo.motoboy_id, rota, estado["saiu"], abertas.get(corpo.motoboy_id, []))
+            rota = despacho.gravar_rota(con, corpo.motoboy_id, viagens, estado["saiu"], abertas.get(corpo.motoboy_id, []))
         if not any(p["id"] == pedido_id for p in rota):
             raise HTTPException(status_code=409, detail="O pedido mudou enquanto era atribuído. Atualize a tela e tente de novo.")
         aviso = " Ele já saiu: a entrega fica para depois que ele voltar ao restaurante." if estado["saiu"] else ""
@@ -307,9 +504,11 @@ def cadastrar_motoboy(motoboy: Motoboy):
     dados = motoboy.model_dump()
     dados["codigo"] = hash_codigo(dados["codigo"])  # o banco guarda só o hash
     with banco.engine.begin() as con:
+        dados["telefone"] = (dados.get("telefone") or "").strip() or None
         con.execute(text(
-            "INSERT INTO motoboys (id, codigo, lat, lng) VALUES (:id, :codigo, :lat, :lng) "
-            "ON CONFLICT (id) DO UPDATE SET codigo = excluded.codigo, lat = excluded.lat, lng = excluded.lng"),
+            "INSERT INTO motoboys (id, codigo, lat, lng, telefone, tipo) VALUES (:id, :codigo, :lat, :lng, :telefone, :tipo) "
+            "ON CONFLICT (id) DO UPDATE SET codigo = excluded.codigo, lat = excluded.lat, lng = excluded.lng, "
+            "telefone = excluded.telefone, tipo = excluded.tipo"),
             dados)
         total = con.execute(text("SELECT COUNT(*) FROM motoboys")).scalar()
     return {"mensagem": "Motoboy disponível", "total_disponiveis": total}
@@ -321,7 +520,7 @@ def listar_motoboys():
     se o GPS dele estiver ativo, a última posição (para o mapa da operação)."""
     with banco.engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT m.id, m.ativo, m.gps_em, m.gps_lat, m.gps_lng, "
+            "SELECT m.id, m.ativo, m.gps_em, m.gps_lat, m.gps_lng, m.telefone, m.tipo, "
             "(SELECT COUNT(*) FROM pedidos p WHERE p.motoboy_id = m.id AND p.status = 'despachado') AS paradas "
             "FROM motoboys m ORDER BY m.id"))]
     for m in linhas:
@@ -341,7 +540,8 @@ def remover_motoboy(motoboy_id: str):
         if r.rowcount == 0:
             raise HTTPException(status_code=404, detail="Motoboy não encontrado")
         devolvidos = con.execute(text(
-            "UPDATE pedidos SET status = 'pendente', motoboy_id = NULL, ordem = NULL, despachado_em = NULL "
+            "UPDATE pedidos SET status = 'pendente', motoboy_id = NULL, ordem = NULL, despachado_em = NULL, "
+            "viagem = NULL, saiu_em = NULL "
             "WHERE motoboy_id = :id AND status = 'despachado'"), {"id": motoboy_id}).rowcount
     return {"mensagem": "Motoboy removido", "pedidos_devolvidos": devolvidos}
 
@@ -381,6 +581,73 @@ def resumo():
               for criado, c in linhas if parse_ts(criado) is not None]
     return {"pendentes": pendentes, "em_rota": em_rota, "entregues_hoje": len(linhas),
             "tempo_medio_min": round(sum(tempos) / len(tempos), 1) if tempos else None}
+
+
+def _numeros_do_periodo(pedidos):
+    """Números de um conjunto de entregas concluídas (veja /estatisticas)."""
+    viagens = {}
+    for p in pedidos:
+        viagens.setdefault(p["viagem"] or ("sozinho:" + p["id"]), []).append(p)
+    km = sum(despacho.km_viagem(sorted(v, key=lambda x: x["ordem"] or 0)) for v in viagens.values())
+    km_sem = despacho.km_individual(pedidos)
+    tempos = [(parse_ts(p["concluido_em"]) - parse_ts(p["criado_em"])).total_seconds() / 60
+              for p in pedidos if parse_ts(p["criado_em"]) and parse_ts(p["concluido_em"])]
+    em_rota = [(parse_ts(p["concluido_em"]) - parse_ts(p["despachado_em"])).total_seconds() / 60
+               for p in pedidos if parse_ts(p["despachado_em"]) and parse_ts(p["concluido_em"])]
+    n = len(pedidos)
+    return {
+        "entregas": n,
+        "viagens": len(viagens),
+        "agrupados": sum(len(v) for v in viagens.values() if len(v) > 1),
+        "km": round(km, 1),
+        "km_economizados": round(max(km_sem - km, 0), 1),
+        "km_por_entrega": round(km / n, 2) if n else None,
+        "tempo_medio_min": round(sum(tempos) / len(tempos), 1) if tempos else None,
+        "tempo_em_rota_min": round(sum(em_rota) / len(em_rota), 1) if em_rota else None,
+        "no_prazo_pct": round(100 * sum(1 for t in tempos if t <= PRAZO_ENTREGA_MIN) / len(tempos)) if tempos else None,
+    }
+
+
+def _variacao(atual, anterior):
+    """Diferença em % (negativa = diminuiu). None quando não dá para comparar."""
+    if atual is None or not anterior:
+        return None
+    return round(100 * (atual - anterior) / anterior)
+
+
+@router.get("/estatisticas")
+def estatisticas(dias: int = 1):
+    """Números das entregas concluídas no período (1 = hoje, 7, 30...), por motoboy e
+    comparados com o período anterior de mesmo tamanho.
+
+    Os quilômetros são estimados (linha reta x FATOR_RUAS). "km_economizados" é a
+    diferença para o caso de cada entrega ter sido uma viagem separada."""
+    dias = max(1, min(dias, 365))
+    inicio = inicio_do_dia_utc(dias_atras=dias - 1)
+    inicio_anterior = inicio_do_dia_utc(dias_atras=2 * dias - 1)
+    with banco.engine.connect() as con:
+        linhas = [dict(r._mapping) for r in con.execute(text(
+            "SELECT id, motoboy_id, lat, lng, viagem, ordem, criado_em, despachado_em, concluido_em FROM pedidos "
+            "WHERE status = 'concluido' AND concluido_em >= :ini"), {"ini": inicio_anterior})]
+    atual = [p for p in linhas if parse_ts(p["concluido_em"]) >= inicio]
+    anterior = [p for p in linhas if parse_ts(p["concluido_em"]) < inicio]
+
+    geral = _numeros_do_periodo(atual)
+    geral["motoboys"] = len({p["motoboy_id"] for p in atual if p["motoboy_id"]})
+    antes = _numeros_do_periodo(anterior)
+    comparacao = {k: _variacao(geral[k], antes[k]) for k in ("km_por_entrega", "tempo_medio_min", "entregas")}
+    if geral["entregas"] and antes["entregas"]:
+        # Viagens por entrega: quanto menor, mais entregas saíram juntas.
+        comparacao["viagens_por_entrega"] = _variacao(geral["viagens"] / geral["entregas"],
+                                                      antes["viagens"] / antes["entregas"])
+
+    por_motoboy = {}
+    for p in atual:
+        por_motoboy.setdefault(p["motoboy_id"] or "?", []).append(p)
+    motoboys = [{"motoboy": m, **_numeros_do_periodo(ps)} for m, ps in por_motoboy.items()]
+    motoboys.sort(key=lambda x: -x["entregas"])
+    return {"dias": dias, "geral": geral, "anterior": antes, "comparacao": comparacao, "motoboys": motoboys,
+            "prazo_min": PRAZO_ENTREGA_MIN}
 
 
 @router.get("/historico.csv")

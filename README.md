@@ -12,18 +12,34 @@ rota no celular, com mapa, navegação pelo Google Maps e botão de "Entregue".
 **Painel do restaurante** (`/painel`)
 - Cadastro de pedidos com busca de endereço e confirmação do ponto no mapa
 - Número do pedido no dia (#1, #2...), fácil de falar no balcão e no telefone
-- Despacho automático com um clique, ou atribuição manual a um motoboy
+- **Três modos de despacho**, escolhidos no próprio painel:
+  - **Manual**: um clique em "Despachar agora" distribui tudo (ou atribua um a um)
+  - **Assistido**: o botão mostra a sugestão antes (quem leva o quê, em quantas viagens
+    e quantos km o agrupamento economiza) e o funcionário só confirma
+  - **Automático**: o sistema despacha sozinho a cada 20 s, seguindo as regras
+- **Regras do despacho** (botão "Regras"): máximo de entregas por viagem, distância
+  máxima para o automático mandar sozinho, quanto tempo um pedido sozinho espera um
+  parceiro de viagem e depois de quanto tempo ele sai de qualquer jeito
+- **Aguardando agrupamento**: pedido sozinho na região aparece em amarelo esperando;
+  pedidos que podem ir juntos mostram "Pode ir junto com #12"
 - Edição e cancelamento de pedidos
 - **Mapa da operação** ao lado da lista: pedidos na fila (vermelho), pedidos em rota
   (na cor de cada motoboy, com a linha da rota) e motoboys com GPS ativo
-- **Alerta de atraso**: faixa vermelha e contador no título da aba quando um pedido
-  passa do tempo na fila ou em rota
+- **Pedidos por situação**: 🟢 no prazo, 🟡 atenção (passou de 70% do limite) e
+  🔴 atrasado, com faixa vermelha e contador no título da aba
+- **Estatísticas** (hoje, 7 ou 30 dias): entregas, viagens, pedidos agrupados, km rodados
+  e economizados, tempo médio, % no prazo, comparação com o período anterior e uma
+  tabela por motoboy
 - Botão de WhatsApp para avisar o cliente que o pedido saiu
 - Resumo do dia (pendentes, em rota, entregues, tempo médio) e histórico em CSV
-- Cadastro de motoboys (com botão para gerar um código seguro) e controle de turno
+- Cadastro de motoboys só com nome, WhatsApp e tipo (próprio ou terceirizado): o código
+  é gerado sozinho e o painel mostra o link, um QR Code e um botão para mandar o link
+  no WhatsApp dele. Controle de turno
 - Funciona em computador (até 3 colunas lado a lado), tablet e celular
 
 **Página do motoboy** (`/motoboy?id=NOME#codigo=CODIGO`)
+- Cartão grande com a **próxima entrega** e os botões principais
+- Botão **"Saí do restaurante"**: a partir daí, pedidos novos ficam para a volta dele
 - Rota do dia no mapa, na ordem certa
 - Botões para navegar, ligar para o cliente e marcar como entregue
 - Aviso na tela (e vibração) quando um pedido é cancelado
@@ -81,6 +97,13 @@ Configure no painel do Render, em **Environment**. **Nunca coloque chaves no có
 | `SAIDA_MIN` | `5` | Sem GPS, minutos após o despacho para considerar que o motoboy saiu |
 | `MAX_PARADAS_VIAGEM` | `5` | Máximo de entregas numa mesma saída |
 | `GPS_VALIDADE_MIN` | `10` | Por quantos minutos a posição do GPS vale |
+| `PRAZO_ENTREGA_MIN` | `45` | Prazo total (pedido criado → entregue) usado no "% no prazo" das estatísticas |
+| `FATOR_RUAS` | `1.3` | Os km das estatísticas são a linha reta vezes este número |
+| `AUTOMATICO_INTERVALO_S` | `20` | No modo automático, de quantos em quantos segundos a fila é conferida |
+
+O modo de despacho e as regras (máximo de entregas por viagem etc.) ficam no painel,
+no botão **Regras**, e são guardados no banco. `MAX_PARADAS_VIAGEM` só vale como valor
+inicial, até alguém salvar as regras.
 
 ## Estrutura do projeto
 
@@ -90,6 +113,7 @@ Configure no painel do Render, em **Environment**. **Nunca coloque chaves no có
 | `config.py` | Todas as variáveis de ambiente, num lugar só |
 | `horarios.py` | Horários e fuso. Regra: o banco guarda tudo em UTC |
 | `banco.py` | Conexão, criação das tabelas e atualização de bancos antigos |
+| `ajustes.py` | Modo de despacho e regras escolhidos no painel |
 | `seguranca.py` | Chave do painel, códigos dos motoboys, limite de tentativas |
 | `mapas.py` | Busca de endereço, distâncias e rotas pelas ruas |
 | `despacho.py` | O algoritmo: agrupar pedidos, escolher motoboy, ordenar paradas |

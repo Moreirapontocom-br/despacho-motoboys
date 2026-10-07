@@ -28,6 +28,12 @@
  .extra{font-size:.9rem;color:#b45309;font-weight:600;margin-top:3px}
  #paradas a.ligar{background:#059669}
  .cancelado{background:#b91c1c;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;font-weight:600}
+ #proxima{display:none;background:#fff;margin:8px;padding:12px 14px;border-radius:10px;border:2px solid #2563eb}
+ #proxima .rot{font-size:.8rem;color:#6b7280;text-transform:uppercase;font-weight:700;letter-spacing:.04em}
+ #proxima .end{font-size:1.2rem;font-weight:700;margin:4px 0}
+ #proxima .botoes{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+ #proxima .botoes a,#proxima .botoes button{flex:1;text-align:center;padding:12px;border-radius:8px;font-size:1.05rem;font-weight:700;border:0;text-decoration:none;color:#fff}
+ .bmaps{background:#2563eb} .bsaiu{background:#f59e0b} .bentregue{background:#10b981}
  .cancelado button{background:#fff;color:#b91c1c;border:0;border-radius:6px;padding:8px 12px;font-size:1rem;font-weight:700;flex-shrink:0}
 </style>
 </head>
@@ -39,6 +45,7 @@
  <button id="ir">Ver rota</button>
 </header>
 <div id="cancelados"></div>
+<div id="proxima"></div>
 <div id="modo">Saindo de: <select id="sel"><option value="rest">do restaurante</option><option value="rua">da minha posição</option></select></div>
 <div id="mapa"></div>
 <div id="msg"></div>
@@ -132,17 +139,71 @@ function mostrarCancelados(lista) {
   });
 }
 
+async function marcarEntregue(p, botao) {
+  if (!confirm("Marcar como entregue?\n" + p.endereco + (p.complemento ? "\n" + p.complemento : ""))) return;
+  botao.disabled = true;
+  try {
+    const resp = await fetch("/rotas/" + encodeURIComponent(id) + "/entregar/" + encodeURIComponent(p.id), {method: "POST", headers: {"X-Codigo": codigo}});
+    if (!resp.ok && resp.status !== 404) throw new Error("falhou");
+  } catch (err) { alert("Não consegui registrar a entrega. Tente de novo."); botao.disabled = false; return; }
+  atualizar();
+}
+
+// Cartão grande no topo: a próxima entrega, com os botões que mais importam.
+// Enquanto ele não sai, o botão principal é "Saí do restaurante": assim o
+// restaurante sabe que ele já foi e não junta pedidos novos nesta viagem.
+function mostrarProxima(dados) {
+  const caixa = document.getElementById("proxima");
+  caixa.innerHTML = "";
+  if (!dados.paradas.length) { caixa.style.display = "none"; return; }
+  const p = dados.paradas[0];
+  const naViagem = dados.paradas.filter((x) => !x.saiu).length;
+  const rot = document.createElement("div"); rot.className = "rot";
+  rot.textContent = p.saiu ? "Próxima entrega" : "Sua rota: " + naViagem + " entrega(s) nesta saída";
+  const end = document.createElement("div"); end.className = "end";
+  end.textContent = "📍 " + (p.rotulo || p.id) + " — " + p.endereco;
+  caixa.append(rot, end);
+  [p.complemento, p.referencia ? "Ref.: " + p.referencia : ""].filter(Boolean).forEach((txt) => {
+    const x = document.createElement("div"); x.className = "extra"; x.textContent = txt; caixa.append(x);
+  });
+  const botoes = document.createElement("div"); botoes.className = "botoes";
+  if (!p.saiu) {
+    const s = document.createElement("button"); s.className = "bsaiu"; s.textContent = "🛵 Saí do restaurante";
+    s.onclick = async () => {
+      s.disabled = true;
+      try {
+        const resp = await fetch("/rotas/" + encodeURIComponent(id) + "/saiu", {method: "POST", headers: {"X-Codigo": codigo}});
+        if (!resp.ok && resp.status !== 404) throw new Error("falhou");
+      } catch (e) { alert("Não consegui avisar. Tente de novo."); s.disabled = false; return; }
+      ultimo = ""; atualizar();
+    };
+    botoes.append(s);
+  }
+  const a = document.createElement("a"); a.className = "bmaps"; a.target = "_blank"; a.textContent = "Abrir no Google Maps";
+  // Sem origem: o Google Maps sai de onde o celular está (no restaurante ou já na rua).
+  a.href = "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(p.endereco);
+  botoes.append(a);
+  if (p.saiu) {
+    const e = document.createElement("button"); e.className = "bentregue"; e.textContent = "✓ Entregue";
+    e.onclick = () => marcarEntregue(p, e);
+    botoes.append(e);
+  }
+  caixa.append(botoes);
+  caixa.style.display = "block";
+}
+
 function desenhar(dados) {
   mostrarCancelados(dados.cancelados);
   const msg = document.getElementById("msg");
   const lista = document.getElementById("paradas");
   camada.clearLayers(); lista.innerHTML = "";
-  if (!dados.paradas.length) { msg.textContent = "Nenhuma rota no momento. Esta página atualiza sozinha."; return; }
+  if (!dados.paradas.length) { mostrarProxima(dados); msg.textContent = "Nenhuma rota no momento. Esta página atualiza sozinha."; return; }
   msg.textContent = dados.paradas.length + " parada(s) na sua rota:";
   const ll = (x) => x.lat + "," + x.lng;
   const ps = dados.paradas.slice(0, 10);
   const origem = encodeURIComponent(dados.restaurante.endereco || ll(dados.restaurante));
   const pOrigem = modo === "rua" ? "" : "&origin=" + origem;
+  mostrarProxima(dados);
   const meio = ps.slice(0, -1).map((x) => x.endereco).join("|");
   const rc = document.createElement("a"); rc.textContent = modo === "rua" ? "Rota completa no Maps (da minha posição)" : "Rota completa no Maps (saindo do restaurante)"; rc.target = "_blank"; rc.className = "completa";
   rc.href = "https://www.google.com/maps/dir/?api=1" + pOrigem + "&destination=" + encodeURIComponent(ps[ps.length - 1].endereco) + (meio ? "&waypoints=" + encodeURIComponent(meio) : "");
@@ -167,15 +228,7 @@ function desenhar(dados) {
       lig.href = "tel:+55" + digitos;
     }
     const e = document.createElement("button"); e.textContent = "Entregue"; e.className = "ent";
-    e.onclick = async () => {
-      if (!confirm("Marcar como entregue?\n" + p.endereco + (p.complemento ? "\n" + p.complemento : ""))) return;
-      e.disabled = true;
-      try {
-        const resp = await fetch("/rotas/" + encodeURIComponent(id) + "/entregar/" + encodeURIComponent(p.id), {method: "POST", headers: {"X-Codigo": codigo}});
-        if (!resp.ok && resp.status !== 404) throw new Error("falhou");
-      } catch (err) { alert("Não consegui registrar a entrega. Tente de novo."); e.disabled = false; return; }
-      atualizar();
-    };
+    e.onclick = () => marcarEntregue(p, e);
     const acoes = document.createElement("div"); acoes.className = "acoes"; acoes.append(a, b); if (lig) acoes.append(lig); acoes.append(e);
     li.append(t, acoes); lista.append(li);
   });

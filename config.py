@@ -54,6 +54,13 @@ ROTA_ATRASO_MIN = _numero("ROTA_ATRASO_MIN", 40)
 PARADA_MIN = _numero("PARADA_MIN", 3)
 SAIDA_MIN = _numero("SAIDA_MIN", 5)
 MAX_PARADAS_VIAGEM = int(_numero("MAX_PARADAS_VIAGEM", 5))
+# Prazo total (do pedido criado até a entrega) usado nas estatísticas de "entregue no prazo".
+PRAZO_ENTREGA_MIN = _numero("PRAZO_ENTREGA_MIN", 45)
+# Os quilômetros das estatísticas são estimados pela linha reta vezes este fator
+# (as ruas fazem curvas; 1,3 é uma média comum em cidades).
+FATOR_RUAS = _numero("FATOR_RUAS", 1.3)
+# No modo automático, de quantos em quantos segundos o sistema confere a fila.
+AUTOMATICO_INTERVALO_S = _numero("AUTOMATICO_INTERVALO_S", 20)
 
 # ---------------------------------------------------------------------
 # Banco de dados

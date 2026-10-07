@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 import api_despacho3  # noqa: E402
+import api_painel  # noqa: E402
 import banco  # noqa: E402
 import config  # noqa: E402
 import despacho  # noqa: E402
@@ -48,6 +49,7 @@ def banco_limpo():
     with banco.engine.begin() as con:
         con.execute(text("DELETE FROM pedidos"))
         con.execute(text("DELETE FROM motoboys"))
+        con.execute(text("DELETE FROM ajustes"))
     seguranca._erros.clear()
     seguranca._bloqueado_ate.clear()
     yield
@@ -473,3 +475,182 @@ def test_lista_de_pedidos_traz_a_hora_local(api):
     novo_pedido(api)
     sql("UPDATE pedidos SET criado_em = :t", t=datetime(2026, 10, 1, 2, 5))
     assert api.get("/pedidos", headers=CHAVE).json()["pedidos"][0]["hora"] == "23:05"
+
+
+# ---------------------------------------------------------------------
+# Modo assistido: sugestão antes de despachar
+# ---------------------------------------------------------------------
+def test_previa_nao_grava_nada_e_mostra_economia(api):
+    novo_motoboy(api, "Carlos")
+    a = novo_pedido(api, lat=-19.630, lng=-43.240)["id"]
+    b = novo_pedido(api, lat=-19.631, lng=-43.241)["id"]
+    r = api.post("/despachar/previa", headers=CHAVE).json()
+    assert sql("SELECT COUNT(*) FROM pedidos WHERE status = 'pendente'").scalar() == 2
+    assert r["viagens"] == 1
+    assert {p["id"] for p in r["sugestoes"][0]["viagens"][0]["pedidos"]} == {a, b}
+    assert r["economia_km"] > 0 and r["km_com"] < r["km_sem"]
+
+
+def test_confirmar_previa_grava_a_sugestao(api):
+    novo_motoboy(api, "Carlos")
+    novo_motoboy(api, "Ana")
+    a = novo_pedido(api, lat=-19.630, lng=-43.240)["id"]
+    plano = api.post("/despachar/previa", headers=CHAVE).json()["plano"]
+    escolhido = next(iter(plano))
+    r = api.post("/despachar", json={"plano": plano}, headers=CHAVE).json()
+    assert list(r["rotas"]) == [escolhido]
+    assert rota(escolhido) == [a]
+
+
+def test_previa_confirmada_ignora_pedido_cancelado_no_meio_tempo(api):
+    novo_motoboy(api, "Carlos")
+    a = novo_pedido(api, lat=-19.630, lng=-43.240)["id"]
+    b = novo_pedido(api, lat=-19.631, lng=-43.241)["id"]
+    plano = api.post("/despachar/previa", headers=CHAVE).json()["plano"]
+    api.post(f"/pedidos/{b}/cancelar", headers=CHAVE)
+    api.post("/despachar", json={"plano": plano}, headers=CHAVE)
+    assert rota("Carlos") == [a]
+
+
+def test_previa_de_motoboy_que_saiu_de_turno_fica_na_fila(api):
+    novo_motoboy(api, "Carlos")
+    novo_pedido(api)
+    plano = api.post("/despachar/previa", headers=CHAVE).json()["plano"]
+    api.post("/motoboys/Carlos/turno", json={"ativo": False}, headers=CHAVE)
+    novo_motoboy(api, "Ana")
+    r = api.post("/despachar", json={"plano": plano}, headers=CHAVE).json()
+    assert "desatualizada" in r["mensagem"]
+    assert sql("SELECT COUNT(*) FROM pedidos WHERE status = 'pendente'").scalar() == 1
+
+
+# ---------------------------------------------------------------------
+# Fila: atenção, agrupamento e regras
+# ---------------------------------------------------------------------
+def test_pedido_sozinho_aguarda_parceiro_e_libera_quando_chega_outro(api):
+    a = novo_pedido(api, lat=-19.630, lng=-43.240)["id"]
+    pedidos = {p["id"]: p for p in api.get("/pedidos", headers=CHAVE).json()["pedidos"]}
+    assert pedidos[a]["aguardando"] is True
+    b = novo_pedido(api, lat=-19.631, lng=-43.241)
+    pedidos = {p["id"]: p for p in api.get("/pedidos", headers=CHAVE).json()["pedidos"]}
+    assert pedidos[a]["aguardando"] is False
+    assert pedidos[a]["agrupar_com"] == [b["rotulo"]]
+
+
+def test_pedido_esperando_muito_nao_aguarda_mais(api):
+    a = novo_pedido(api)["id"]
+    sql("UPDATE pedidos SET criado_em = :t WHERE id = :p", t=horarios.agora_utc() - timedelta(minutes=12), p=a)
+    p = api.get("/pedidos", headers=CHAVE).json()["pedidos"][0]
+    assert p["aguardando"] is False
+    assert p["situacao"] == "atencao"  # 12 de 15 min: passou de 70%
+
+
+def test_situacao_atrasado(api):
+    a = novo_pedido(api)["id"]
+    sql("UPDATE pedidos SET criado_em = :t WHERE id = :p", t=horarios.agora_utc() - timedelta(minutes=30), p=a)
+    assert api.get("/pedidos", headers=CHAVE).json()["pedidos"][0]["situacao"] == "atrasado"
+
+
+def test_ajustes_salvam_e_validam(api):
+    assert api.get("/ajustes", headers=CHAVE).json()["ajustes"]["modo"] == "manual"
+    r = api.put("/ajustes", json={"modo": "assistido", "max_paradas": 3}, headers=CHAVE)
+    assert r.json()["ajustes"]["modo"] == "assistido" and r.json()["ajustes"]["max_paradas"] == 3
+    assert api.put("/ajustes", json={"modo": "qualquer"}, headers=CHAVE).status_code == 422
+    assert api.put("/ajustes", json={"max_paradas": 0}, headers=CHAVE).status_code == 422
+
+
+def test_max_paradas_dos_ajustes_divide_as_viagens(api):
+    api.put("/ajustes", json={"max_paradas": 1}, headers=CHAVE)
+    novo_motoboy(api, "Carlos")
+    novo_pedido(api, lat=-19.630, lng=-43.240)
+    novo_pedido(api, lat=-19.631, lng=-43.241)
+    assert api.post("/despachar/previa", headers=CHAVE).json()["viagens"] == 2
+
+
+# ---------------------------------------------------------------------
+# Despacho automático
+# ---------------------------------------------------------------------
+def test_automatico_desligado_nao_faz_nada(api):
+    novo_motoboy(api, "Carlos")
+    novo_pedido(api)
+    assert api_painel.despacho_automatico_uma_vez() is None
+    assert rota("Carlos") == []
+
+
+def test_automatico_despacha_quem_esta_pronto_e_segura_quem_aguarda(api):
+    api.put("/ajustes", json={"modo": "automatico", "espera_agrupamento_min": 5}, headers=CHAVE)
+    novo_motoboy(api, "Carlos")
+    sozinho = novo_pedido(api, lat=-19.630, lng=-43.240)["id"]
+    api_painel.despacho_automatico_uma_vez()
+    assert rota("Carlos") == []  # ainda esperando um parceiro de viagem
+    parceiro = novo_pedido(api, lat=-19.631, lng=-43.241)["id"]
+    api_painel.despacho_automatico_uma_vez()
+    assert set(rota("Carlos")) == {sozinho, parceiro}
+    assert len({r[0] for r in sql("SELECT viagem FROM pedidos WHERE motoboy_id = 'Carlos'")}) == 1
+
+
+def test_automatico_nao_manda_pedido_alem_do_raio(api):
+    api.put("/ajustes", json={"modo": "automatico", "raio_max_km": 1, "espera_agrupamento_min": 0}, headers=CHAVE)
+    novo_motoboy(api, "Carlos")
+    longe = novo_pedido(api, lat=R["lat"] - 0.1, lng=R["lng"])["id"]  # ~11 km
+    perto = novo_pedido(api, lat=R["lat"] - 0.002, lng=R["lng"])["id"]
+    api_painel.despacho_automatico_uma_vez()
+    assert rota("Carlos") == [perto]
+    assert sql("SELECT status FROM pedidos WHERE id = :p", p=longe).scalar() == "pendente"
+    pedido_longe = [p for p in api.get("/pedidos", headers=CHAVE).json()["pedidos"] if p["id"] == longe][0]
+    assert pedido_longe["longe"] is True
+
+
+# ---------------------------------------------------------------------
+# Motoboy avisa que saiu
+# ---------------------------------------------------------------------
+def test_motoboy_avisa_saida_e_pedido_novo_fica_para_a_volta(api):
+    novo_motoboy(api, "Carlos")
+    a = novo_pedido(api, lat=-19.630, lng=-43.240)["id"]
+    api.post("/despachar", headers=CHAVE)
+    assert api.post("/rotas/Carlos/saiu", headers={"X-Codigo": CODIGO}).status_code == 200
+    b = novo_pedido(api, lat=-19.631, lng=-43.241)["id"]
+    api.post("/despachar", headers=CHAVE)
+    assert rota("Carlos") == [a, b]
+    viagens = dict(sql("SELECT id, viagem FROM pedidos").all())
+    assert viagens[a] != viagens[b]
+    paradas = ver_rota(api, "Carlos").json()["paradas"]
+    assert [p["saiu"] for p in paradas] == [True, False]
+
+
+def test_avisar_saida_exige_codigo(api):
+    novo_motoboy(api, "Carlos")
+    assert api.post("/rotas/Carlos/saiu", headers={"X-Codigo": "errado"}).status_code == 401
+
+
+# ---------------------------------------------------------------------
+# Cadastro do motoboy e estatísticas
+# ---------------------------------------------------------------------
+def test_cadastro_com_telefone_e_tipo(api):
+    r = api.post("/motoboys", json={"id": "Joao", "codigo": CODIGO, "lat": R["lat"], "lng": R["lng"],
+                                    "telefone": "(31) 99999-0000", "tipo": "terceirizado"}, headers=CHAVE)
+    assert r.status_code == 200
+    m = api.get("/motoboys", headers=CHAVE).json()["motoboys"][0]
+    assert (m["telefone"], m["tipo"]) == ("(31) 99999-0000", "terceirizado")
+    r = api.post("/motoboys", json={"id": "X", "codigo": CODIGO, "lat": R["lat"], "lng": R["lng"], "tipo": "outro"},
+                 headers=CHAVE)
+    assert r.status_code == 422
+
+
+def test_estatisticas_contam_viagens_agrupadas_e_economia(api):
+    novo_motoboy(api, "Carlos")
+    a = novo_pedido(api, lat=-19.630, lng=-43.240)["id"]
+    b = novo_pedido(api, lat=-19.631, lng=-43.241)["id"]
+    api.post("/despachar", headers=CHAVE)
+    for p in (a, b):
+        api.post(f"/rotas/Carlos/entregar/{p}", headers={"X-Codigo": CODIGO})
+    e = api.get("/estatisticas?dias=1", headers=CHAVE).json()
+    g = e["geral"]
+    assert (g["entregas"], g["viagens"], g["agrupados"], g["motoboys"]) == (2, 1, 2, 1)
+    assert g["km"] > 0 and g["km_economizados"] > 0
+    assert g["no_prazo_pct"] == 100
+    assert e["motoboys"][0]["motoboy"] == "Carlos" and e["motoboys"][0]["entregas"] == 2
+
+
+def test_estatisticas_sem_entregas(api):
+    g = api.get("/estatisticas?dias=7", headers=CHAVE).json()["geral"]
+    assert g["entregas"] == 0 and g["tempo_medio_min"] is None

@@ -33,10 +33,14 @@ def criar_engine(url):
 # faltarem são criadas; as que já existem ficam como estão.
 _COLUNAS_NOVAS = {
     "motoboys": [("ativo", "BOOLEAN NOT NULL DEFAULT TRUE"), ("gps_lat", "DOUBLE PRECISION"),
-                 ("gps_lng", "DOUBLE PRECISION"), ("gps_em", "TIMESTAMP")],
+                 ("gps_lng", "DOUBLE PRECISION"), ("gps_em", "TIMESTAMP"),
+                 ("telefone", "TEXT"), ("tipo", "TEXT")],  # tipo: "proprio" ou "terceirizado"
     "pedidos": [("concluido_em", "TIMESTAMP"), ("telefone", "TEXT"), ("cancelado_em", "TIMESTAMP"),
                 ("despachado_em", "TIMESTAMP"),
-                ("num", "INTEGER")]  # número do pedido no dia (#1, #2...), fácil de falar no balcão
+                ("num", "INTEGER"),  # número do pedido no dia (#1, #2...), fácil de falar no balcão
+                # viagem: paradas com o mesmo valor saíram juntas do restaurante (usado nas estatísticas).
+                # saiu_em: quando o motoboy tocou em "Saí do restaurante" na página dele.
+                ("viagem", "TEXT"), ("saiu_em", "TIMESTAMP")]
                + [(c, "TEXT") for c in CAMPOS_ENDERECO],
 }
 
@@ -45,7 +49,8 @@ _COLUNAS_NOVAS = {
 _INDICES = ("idx_pedidos_status ON pedidos (status)",
             "idx_pedidos_motoboy ON pedidos (motoboy_id, status)",
             "idx_pedidos_criado ON pedidos (criado_em)",
-            "idx_pedidos_concluido ON pedidos (concluido_em)")
+            "idx_pedidos_concluido ON pedidos (concluido_em)",
+            "idx_pedidos_viagem ON pedidos (viagem)")
 
 
 def preparar(eng):
@@ -68,6 +73,12 @@ def preparar(eng):
                 motoboy_id TEXT,
                 ordem INTEGER,
                 criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )"""))
+        # Ajustes do despacho escolhidos no painel (modo e regras). Valores em texto (JSON).
+        con.execute(text("""
+            CREATE TABLE IF NOT EXISTS ajustes (
+                chave TEXT PRIMARY KEY,
+                valor TEXT NOT NULL
             )"""))
 
     # Confere quais colunas já existem antes de criar. Diferente de tentar criar e

@@ -31,7 +31,7 @@ def rota_do_motoboy(motoboy_id: str, request: Request, x_codigo: str = Header(de
     with banco.engine.connect() as con:
         conferir_codigo(con, request, motoboy_id, x_codigo)
         paradas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, num, endereco, complemento, referencia, telefone, lat, lng FROM pedidos "
+            "SELECT id, num, endereco, complemento, referencia, telefone, lat, lng, viagem, saiu_em FROM pedidos "
             "WHERE motoboy_id = :id AND status = 'despachado' ORDER BY ordem"),
             {"id": motoboy_id})]
         # Pedidos dele cancelados na última hora, para a página mostrar um aviso
@@ -45,6 +45,7 @@ def rota_do_motoboy(motoboy_id: str, request: Request, x_codigo: str = Header(de
                   for c in recentes if (parse_ts(c.cancelado_em) or limite) > limite]
     for p in paradas:
         p["rotulo"] = rotulo(p["num"], p["id"])
+        p["saiu"] = bool(p.pop("saiu_em"))
     return {"motoboy_id": motoboy_id, "restaurante": RESTAURANTE, "paradas": paradas, "cancelados": cancelados,
             "trajeto": trajeto(RESTAURANTE, paradas) if paradas else None}
 
@@ -61,6 +62,28 @@ def marcar_entregue(motoboy_id: str, pedido_id: str, request: Request, x_codigo:
         if r.rowcount == 0:
             raise HTTPException(status_code=404, detail="Pedido não encontrado na sua rota")
     return {"mensagem": "Entrega registrada"}
+
+
+@router.post("/rotas/{motoboy_id}/saiu")
+def avisar_saida(motoboy_id: str, request: Request, x_codigo: str = Header(default="")):
+    """O motoboy toca em "Saí do restaurante". Marca as paradas da viagem atual (a
+    primeira ainda em aberto) como saídas: daí em diante o despacho não junta
+    pedidos novos nela, e eles ficam para a volta."""
+    with banco.engine.begin() as con:
+        conferir_codigo(con, request, motoboy_id, x_codigo)
+        primeira = con.execute(text(
+            "SELECT viagem FROM pedidos WHERE motoboy_id = :m AND status = 'despachado' ORDER BY ordem LIMIT 1"),
+            {"m": motoboy_id}).first()
+        if primeira is None:
+            raise HTTPException(status_code=404, detail="Você não tem entregas em aberto.")
+        if primeira[0]:
+            filtro, params = "viagem = :v", {"v": primeira[0]}
+        else:  # pedidos de antes desta versão não têm viagem: marca todas as paradas abertas
+            filtro, params = "1 = 1", {}
+        n = con.execute(text(
+            f"UPDATE pedidos SET saiu_em = CURRENT_TIMESTAMP WHERE motoboy_id = :m AND status = 'despachado' "
+            f"AND saiu_em IS NULL AND {filtro}"), {"m": motoboy_id, **params}).rowcount
+    return {"mensagem": "Boa entrega!", "paradas": n}
 
 
 @router.post("/rotas/{motoboy_id}/posicao")
