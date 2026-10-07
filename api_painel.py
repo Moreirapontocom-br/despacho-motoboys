@@ -1,7 +1,8 @@
 """
 Endereços usados pelo painel do restaurante (e por outros sistemas que mandam
-pedidos). Todos exigem a API_KEY no cabeçalho X-API-Key, menos a página /painel,
-que não tem dados: eles só aparecem depois de digitar a chave.
+pedidos). Todos exigem login (sessão de e-mail e senha) ou a API_KEY no cabeçalho
+X-API-Key, menos a página /painel, que não tem dados: eles só aparecem
+depois de entrar.
 """
 
 import csv
@@ -18,15 +19,18 @@ from sqlalchemy import text
 
 import ajustes
 import banco
+import contas
 import despacho
 import paginas
 from config import (AUTOMATICO_INTERVALO_S, PEDIDO_ATRASO_MIN, PRAZO_ENTREGA_MIN, RESTAURANTE, RESTAURANTE_CIDADE,
                     RESTAURANTE_NOME, ROTA_ATRASO_MIN, log)
 from horarios import agora_utc, fmt_local, gps_recente, inicio_do_dia_utc, para_local, parse_ts
 from mapas import buscar_endereco
-from seguranca import exigir_chave, hash_codigo
+from seguranca import hash_codigo
 
-router = APIRouter(dependencies=[Depends(exigir_chave)])
+# Tudo aqui exige login (e-mail e senha) ou a API_KEY. Algumas ações (regras,
+# cadastro de motoboys) também exigem ser dono ou administrador.
+router = APIRouter(dependencies=[Depends(contas.exigir_acesso)])
 pagina = APIRouter()
 
 
@@ -511,7 +515,7 @@ def ver_ajustes():
 
 
 @router.put("/ajustes")
-def salvar_ajustes(r: Regras):
+def salvar_ajustes(r: Regras, _=Depends(contas.exigir_gestor)):
     with banco.engine.begin() as con:
         novos = ajustes.salvar(con, r.model_dump(exclude_none=True))
     return {"mensagem": "Ajustes salvos", "ajustes": novos}
@@ -549,7 +553,7 @@ def atribuir_manual(pedido_id: str, corpo: Atribuicao):
 # Motoboys
 # ---------------------------------------------------------------------
 @router.post("/motoboys")
-def cadastrar_motoboy(motoboy: Motoboy):
+def cadastrar_motoboy(motoboy: Motoboy, _=Depends(contas.exigir_gestor)):
     """Cadastra o motoboy ou atualiza a localização/código dele se já existir."""
     dados = motoboy.model_dump()
     dados["codigo"] = hash_codigo(dados["codigo"])  # o banco guarda só o hash
@@ -594,7 +598,7 @@ def listar_motoboys():
 
 
 @router.delete("/motoboys/{motoboy_id}")
-def remover_motoboy(motoboy_id: str):
+def remover_motoboy(motoboy_id: str, _=Depends(contas.exigir_gestor)):
     """Remove o motoboy. As paradas que ele ainda não entregou voltam para a fila.
     Usa a trava do despacho: senão, um despacho rodando ao mesmo tempo podia
     entregar pedidos novos a um motoboy que acabou de ser removido."""

@@ -179,24 +179,62 @@
  table.motos th:first-child,table.motos td:first-child{text-align:left}
  .tabela{overflow-x:auto}
  #qrMoto img{display:block;margin:8px 0;image-rendering:pixelated}
+ /* Login */
+ #telaLogin{position:fixed;inset:0;z-index:3000;background:var(--escuro);display:none;align-items:center;justify-content:center;padding:16px}
+ .caixaLogin{background:#fff;border-radius:14px;padding:24px;width:100%;max-width:380px}
+ .caixaLogin h1{font-size:1.25rem;margin:0 0 12px}
+ .caixaLogin input{width:100%;margin-top:8px;padding:11px}
+ button.grande{width:100%;margin-top:12px;padding:12px;font-size:1.05rem;font-weight:700}
+ .linkzinho{background:none;color:var(--suave);padding:6px 0;font-size:.85rem;text-decoration:underline}
+ #quemSou{color:#d1d5db;font-size:.88rem}
+ body.funcionario .so-gestor{display:none !important}
+ #listaEquipe li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--borda);flex-wrap:wrap}
+ #listaEquipe li:first-child{border-top:0}
 </style>
 </head>
 <body>
+<div id="telaLogin">
+ <div class="caixaLogin">
+  <h1>🛵 Despacho de entregas</h1>
+  <div id="formEntrar">
+   <div class="ajuda">Entre com o seu e-mail e senha.</div>
+   <input id="lgEmail" type="email" placeholder="E-mail" autocomplete="username">
+   <input id="lgSenha" type="password" placeholder="Senha" autocomplete="current-password">
+   <button id="btEntrar" class="verde grande">Entrar</button>
+   <div class="ajuda" style="margin-top:10px">Esqueceu a senha? Peça ao dono do restaurante para definir uma nova.</div>
+  </div>
+  <div id="formPrimeiro" style="display:none">
+   <div class="ajuda"><strong>Primeiro acesso:</strong> crie a conta do dono do restaurante. Precisa da chave do sistema
+    (a API_KEY configurada no Render). Depois disso, todo mundo entra com e-mail e senha.</div>
+   <input id="prNome" placeholder="Seu nome" autocomplete="name">
+   <input id="prEmail" type="email" placeholder="E-mail" autocomplete="username">
+   <input id="prSenha" type="password" placeholder="Senha (mínimo 8 caracteres)" autocomplete="new-password">
+   <input id="prChave" type="password" placeholder="Chave do sistema (API_KEY)" autocomplete="off">
+   <button id="btPrimeiro" class="verde grande">Criar conta do dono</button>
+  </div>
+  <div id="formAdmin" style="display:none">
+   <div class="ajuda">Acesso do administrador do sistema, com a chave (API_KEY).</div>
+   <input id="adChave" type="password" placeholder="Chave do sistema (API_KEY)" autocomplete="off">
+   <button id="btAdmin" class="grande">Entrar como administrador</button>
+  </div>
+  <div id="msgLogin" style="margin-top:8px"></div>
+  <button id="alternarAdmin" class="linkzinho">Entrar com a chave de administrador</button>
+ </div>
+</div>
 <div class="topo">
 <header>
  <h1>Painel do restaurante</h1>
- <div id="login">
-  <input id="chave" type="password" placeholder="cole a chave do restaurante (API_KEY)" autocomplete="current-password">
-  <button id="salvar">Entrar</button>
- </div>
  <span class="espaco"></span>
  <span id="relogio"></span>
+ <span id="quemSou"></span>
+ <button id="sair" class="claro mini" style="display:none">Sair</button>
 </header>
 
 <nav class="abas" id="abas">
  <button data-aba="abaOperacao" class="sel">🏠 Operação</button>
  <button data-aba="abaMotoboys">🛵 Motoboys</button>
  <button data-aba="abaRelatorios">📊 Relatórios</button>
+ <button data-aba="abaConta">👤 Conta</button>
 </nav>
 </div>
 
@@ -215,11 +253,11 @@
 </div>
 <div id="barraModo">
  <span class="ajuda" style="margin:0">Despacho:</span>
- <div class="seg" id="seletorModo">
+ <div class="seg so-gestor" id="seletorModo">
   <button data-modo="assistido" title="O sistema sugere; o funcionário confere e confirma">Assistido</button>
   <button data-modo="automatico" title="O sistema despacha sozinho, seguindo as regras">Automático</button>
  </div>
- <button id="abrirRegras" class="claro mini">Regras</button>
+ <button id="abrirRegras" class="claro mini so-gestor">Regras</button>
  <span id="infoAuto"></span>
 </div>
 <div id="regras">
@@ -309,7 +347,7 @@
   <section>
    <h2>Pedidos</h2>
    <div id="alertaAtraso"></div>
-   <div id="fila"><div class="vazio">Digite a chave do restaurante no topo e clique em Entrar.</div></div>
+   <div id="fila"><div class="vazio">Carregando...</div></div>
   </section>
  </div>
 
@@ -329,6 +367,7 @@
   <section>
    <h2>Motoboys <span class="contador" id="contMoto">0</span></h2>
    <ul id="listaMoto"></ul>
+   <div class="so-gestor">
    <h2 style="margin-top:12px">+ Adicionar motoboy</h2>
    <div class="linha">
     <input id="motoNome" placeholder="Nome (ex.: João)">
@@ -345,8 +384,40 @@
     </div>
    </details>
    <div class="ajuda">O motoboy recebe um link (e QR Code) para abrir a rota dele. Nome já existente: o acesso antigo dele para de funcionar e vale o link novo. Motoboy novo entra "De turno".</div>
+   </div>
    <div id="msgMoto"></div>
    <div id="qrMoto"></div>
+  </section>
+ </div>
+</div>
+
+<div id="abaConta" class="aba" style="display:none">
+ <div class="pagina">
+  <section>
+   <h2>Minha senha</h2>
+   <div class="ajuda" id="contaInfo"></div>
+   <div id="minhaSenha">
+    <div class="linha"><input id="snAtual" type="password" placeholder="Senha atual" autocomplete="current-password"></div>
+    <div class="linha"><input id="snNova" type="password" placeholder="Senha nova (mínimo 8)" autocomplete="new-password">
+     <button id="btTrocarSenha">Trocar senha</button></div>
+    <div class="ajuda">Ao trocar, você sai dos outros computadores e celulares onde estava conectado.</div>
+   </div>
+   <div id="msgSenha"></div>
+  </section>
+  <section class="so-gestor">
+   <h2>Equipe</h2>
+   <div class="ajuda">Cada pessoa entra com o próprio e-mail e senha. <strong>Funcionário</strong> opera pedidos, despacho e turno dos motoboys.
+    <strong>Dono</strong> também muda regras, cadastra motoboys e cuida da equipe.</div>
+   <ul id="listaEquipe"></ul>
+   <h2 style="margin-top:12px">+ Adicionar pessoa</h2>
+   <div class="linha"><input id="eqNome" placeholder="Nome"><input id="eqEmail" type="email" placeholder="E-mail"></div>
+   <div class="linha">
+    <input id="eqSenha" placeholder="Senha inicial (mínimo 8)" autocomplete="off">
+    <select id="eqPapel"><option value="funcionario">Funcionário</option><option value="dono">Dono</option></select>
+    <button id="btEquipe">Adicionar</button>
+   </div>
+   <div class="ajuda">Passe a senha inicial para a pessoa e peça para ela trocar em "Minha senha".</div>
+   <div id="msgEquipe"></div>
   </section>
  </div>
 </div>
@@ -382,35 +453,153 @@ const el = (tag, props, ...filhos) => { const e = Object.assign(document.createE
 function guardar(chave, valor) { try { valor === null ? localStorage.removeItem(chave) : localStorage.setItem(chave, valor); } catch (e) {} }
 function ler(chave) { try { return localStorage.getItem(chave); } catch (e) { return null; } }
 
-let chave = "";
-try { chave = sessionStorage.getItem("chave") || ""; } catch (e) {}
-$("chave").value = chave;
+// ---------------------------------------------------------------------
+// Login. Cada pessoa entra com e-mail e senha; a sessão fica guardada neste
+// computador por até 30 dias (até tocar em "Sair"). O administrador do sistema
+// pode entrar com a chave (API_KEY), que só fica guardada enquanto a aba estiver aberta.
+// ---------------------------------------------------------------------
+let sessao = ler("sessao") || "", chaveAdmin = "";
+try { chaveAdmin = sessionStorage.getItem("chaveAdmin") || ""; } catch (e) {}
+let chave = sessao || chaveAdmin;  // tem alguém conectado? (o resto do painel confere isso)
+let eu = null;
 $("cidade").value = CONFIG.cidade;
+
+function cabecalhosAuth() { return sessao ? {"Authorization": "Bearer " + sessao} : {"X-API-Key": chaveAdmin}; }
+function esquecerLogin() {
+  sessao = ""; chaveAdmin = ""; chave = ""; eu = null;
+  guardar("sessao", null); try { sessionStorage.removeItem("chaveAdmin"); } catch (e) {}
+}
 
 async function api(caminho, metodo, corpo) {
   const resp = await fetch(caminho, {
     method: metodo || "GET",
-    headers: {"X-API-Key": chave, "Content-Type": "application/json"},
+    headers: Object.assign({"Content-Type": "application/json"}, cabecalhosAuth()),
     body: corpo ? JSON.stringify(corpo) : undefined
   });
   if (resp.status === 401) {
-    // Para de consultar sozinho com a chave errada (senão o servidor bloqueia o computador por excesso de erros).
-    chave = ""; try { sessionStorage.removeItem("chave"); } catch (e) {}
-    throw new Error("Chave incorreta. Digite de novo e clique em Entrar.");
+    // Sessão acabou (ou chave errada): para de consultar sozinho e volta para a tela de login.
+    const eraAdmin = !sessao;
+    esquecerLogin(); mostrarLogin(eraAdmin ? "Chave de administrador incorreta." : "Sua sessão terminou. Entre de novo.");
+    throw new Error("Entre de novo.");
   }
-  if (resp.status === 429) { chave = ""; }
+  if (resp.status === 429 && !sessao) { chave = ""; }
   if (!resp.ok) { let d = ""; try { d = (await resp.json()).detail; } catch (e) {} throw new Error(d || "Erro " + resp.status); }
   return resp.json();
 }
 
 function dizer(alvo, texto, classe) { alvo.textContent = texto; alvo.className = classe || ""; }
 
-$("salvar").onclick = () => {
-  chave = $("chave").value.trim();
-  try { sessionStorage.setItem("chave", chave); } catch (e) {}
-  atualizarTudo(); carregarBairros();
+async function mostrarLogin(msg) {
+  $("telaLogin").style.display = "flex";
+  $("formAdmin").style.display = "none"; $("alternarAdmin").textContent = "Entrar com a chave de administrador";
+  let primeiro = false;
+  try { primeiro = !(await (await fetch("/auth/estado")).json()).tem_usuarios; } catch (e) {}
+  $("formPrimeiro").style.display = primeiro ? "block" : "none";
+  $("formEntrar").style.display = primeiro ? "none" : "block";
+  dizer($("msgLogin"), msg || "", msg ? "erro" : "");
+  (primeiro ? $("prNome") : $("lgEmail")).focus();
+}
+async function postLogin(caminho, corpo) {
+  const resp = await fetch(caminho, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(corpo)});
+  let d = {}; try { d = await resp.json(); } catch (e) {}
+  if (!resp.ok) {
+    const det = Array.isArray(d.detail) ? "Confira os campos." : d.detail;
+    throw new Error(det || "Não consegui entrar agora. Tente de novo.");
+  }
+  return d;
+}
+async function entrarCom(caminho, corpo, botao) {
+  botao.disabled = true; dizer($("msgLogin"), "Entrando...");
+  try {
+    const r = await postLogin(caminho, corpo);
+    sessao = r.token; guardar("sessao", sessao);
+    await aposEntrar();
+  } catch (err) { dizer($("msgLogin"), err.message, "erro"); }
+  botao.disabled = false;
+}
+$("btEntrar").onclick = () => entrarCom("/auth/entrar", {email: $("lgEmail").value, senha: $("lgSenha").value}, $("btEntrar"));
+$("btPrimeiro").onclick = () => entrarCom("/auth/primeiro-acesso", {nome: $("prNome").value, email: $("prEmail").value,
+                                          senha: $("prSenha").value, chave: $("prChave").value.trim()}, $("btPrimeiro"));
+$("btAdmin").onclick = async () => {
+  chaveAdmin = $("adChave").value.trim(); sessao = "";
+  if (!chaveAdmin) return;
+  try { sessionStorage.setItem("chaveAdmin", chaveAdmin); } catch (e) {}
+  await aposEntrar();
 };
-$("chave").onkeydown = (e) => { if (e.key === "Enter") $("salvar").click(); };
+$("alternarAdmin").onclick = () => {
+  const abrir = $("formAdmin").style.display === "none";
+  if (!abrir) { mostrarLogin(); return; }
+  $("formAdmin").style.display = "block"; $("formEntrar").style.display = "none"; $("formPrimeiro").style.display = "none";
+  $("alternarAdmin").textContent = "Voltar para e-mail e senha"; dizer($("msgLogin"), ""); $("adChave").focus();
+};
+[["lgSenha", "btEntrar"], ["lgEmail", "btEntrar"], ["prChave", "btPrimeiro"], ["adChave", "btAdmin"]].forEach(([c, b]) => {
+  $(c).onkeydown = (e) => { if (e.key === "Enter") $(b).click(); };
+});
+
+async function aposEntrar() {
+  chave = sessao || chaveAdmin;
+  try { eu = await api("/auth/eu"); }
+  catch (err) { if ($("telaLogin").style.display !== "flex") mostrarLogin(err.message); else dizer($("msgLogin"), "Não deu certo: confira e tente de novo.", "erro"); return; }
+  $("telaLogin").style.display = "none"; $("lgSenha").value = ""; $("prSenha").value = ""; $("prChave").value = ""; $("adChave").value = "";
+  document.body.classList.toggle("funcionario", eu.papel === "funcionario");
+  $("quemSou").textContent = "👤 " + eu.nome + (eu.papel === "dono" ? " (dono)" : eu.papel === "admin" ? "" : " (funcionário)");
+  $("sair").style.display = "inline-block";
+  $("contaInfo").textContent = eu.tipo === "admin" ? "Você entrou como administrador do sistema (com a chave). O administrador não tem senha."
+                                                   : "Conectado como " + eu.email + ".";
+  $("minhaSenha").style.display = eu.tipo === "admin" ? "none" : "block";
+  atualizarTudo(); carregarBairros();
+  if (eu.papel !== "funcionario") carregarEquipe();
+}
+$("sair").onclick = async () => {
+  if (sessao) { try { await fetch("/auth/sair", {method: "POST", headers: cabecalhosAuth()}); } catch (e) {} }
+  esquecerLogin(); location.reload();
+};
+
+// ---------------------------------------------------------------------
+// Conta: minha senha e equipe (equipe só para dono e administrador)
+// ---------------------------------------------------------------------
+$("btTrocarSenha").onclick = async () => {
+  try {
+    const r = await api("/auth/senha", "POST", {atual: $("snAtual").value, nova: $("snNova").value});
+    sessao = r.token; guardar("sessao", sessao); chave = sessao;
+    $("snAtual").value = ""; $("snNova").value = "";
+    dizer($("msgSenha"), "Senha trocada.", "ok");
+  } catch (err) { dizer($("msgSenha"), err.message, "erro"); }
+};
+async function carregarEquipe() {
+  try {
+    const r = await api("/usuarios");
+    const ul = $("listaEquipe"); ul.innerHTML = "";
+    r.usuarios.forEach((u) => {
+      const nova = el("button", {className: "claro mini", textContent: "Definir senha nova"});
+      nova.onclick = async () => {
+        const senha = prompt("Senha nova para " + u.nome + " (mínimo 8 caracteres):");
+        if (!senha) return;
+        try { dizer($("msgEquipe"), (await api("/usuarios/" + encodeURIComponent(u.email) + "/senha", "POST", {senha: senha})).mensagem, "ok"); }
+        catch (err) { dizer($("msgEquipe"), err.message, "erro"); }
+      };
+      const rem = el("button", {className: "perigo mini", textContent: "Remover"});
+      rem.onclick = async () => {
+        if (!confirm("Remover a conta de " + u.nome + "? A pessoa é desconectada na hora.")) return;
+        try { dizer($("msgEquipe"), (await api("/usuarios/" + encodeURIComponent(u.email), "DELETE")).mensagem, "ok"); carregarEquipe(); }
+        catch (err) { dizer($("msgEquipe"), err.message, "erro"); }
+      };
+      const acoes = el("div", {className: "acoes", style: "margin:0"});
+      if (u.email !== r.eu) acoes.append(nova, rem);  // a própria senha muda em "Minha senha"
+      ul.append(el("li", {}, el("div", {}, el("strong", {textContent: u.nome}),
+        el("span", {className: "detalheMoto", textContent: " · " + u.email + " · " + (u.papel === "dono" ? "dono" : "funcionário")})), acoes));
+    });
+  } catch (err) { dizer($("msgEquipe"), err.message, "erro"); }
+}
+$("btEquipe").onclick = async () => {
+  try {
+    const r = await api("/usuarios", "POST", {nome: $("eqNome").value.trim(), email: $("eqEmail").value.trim(),
+                                             senha: $("eqSenha").value, papel: $("eqPapel").value});
+    dizer($("msgEquipe"), r.mensagem, "ok");
+    $("eqNome").value = ""; $("eqEmail").value = ""; $("eqSenha").value = "";
+    carregarEquipe();
+  } catch (err) { dizer($("msgEquipe"), err.message.includes("422") ? "Confira os campos (senha com 8+ caracteres)." : err.message, "erro"); }
+};
 
 // Relógio no cabeçalho (horário do computador do restaurante).
 function relogio() { $("relogio").textContent = new Date().toLocaleTimeString("pt-BR", {hour: "2-digit", minute: "2-digit"}); }
@@ -1077,7 +1266,7 @@ async function carregarMotos(automatico) {
         try { await api("/motoboys/" + encodeURIComponent(m.id) + "/turno", "POST", {ativo: !m.ativo}); atualizarTudo(); }
         catch (err) { dizer($("msgMoto"), err.message, "erro"); g.disabled = false; }
       };
-      const b = el("button", {textContent: "Remover", className: "perigo mini"});
+      const b = el("button", {textContent: "Remover", className: "perigo mini so-gestor"});
       b.onclick = async () => {
         if (!confirm("Remover " + m.id + "?" + (m.paradas ? "\nAs " + m.paradas + " parada(s) dele voltam para a fila." : ""))) return;
         try { await api("/motoboys/" + encodeURIComponent(m.id), "DELETE"); dizer($("msgMoto"), m.id + " removido.", "ok"); atualizarTudo(); }
@@ -1109,7 +1298,7 @@ $("salvarMoto").onclick = async () => {
   $("salvarMoto").disabled = true;
   try {
     if (!centro) await carregarMotos();
-    if (!centro) throw new Error("Entre com a chave primeiro.");
+    if (!centro) throw new Error("Entre primeiro.");
     await api("/motoboys", "POST", {id: nome, codigo: codigo, lat: centro.lat, lng: centro.lng, telefone: tel || null, tipo: $("motoTipo").value});
     // O código vai depois do "#": essa parte do link não é enviada ao servidor.
     const link = location.origin + "/m/" + encodeURIComponent(nome) + "#codigo=" + encodeURIComponent(codigo);
@@ -1151,12 +1340,12 @@ async function carregarResumo() {
 }
 
 $("baixarHistorico").onclick = async () => {
-  if (!chave) { dizer($("msgHistorico"), "Entre com a chave primeiro.", "erro"); return; }
+  if (!chave) { dizer($("msgHistorico"), "Entre primeiro.", "erro"); return; }
   const dias = $("diasHistorico").value || 30;
   $("baixarHistorico").disabled = true;
   dizer($("msgHistorico"), "Gerando arquivo...");
   try {
-    const resp = await fetch("/historico.csv?dias=" + encodeURIComponent(dias), {headers: {"X-API-Key": chave}});
+    const resp = await fetch("/historico.csv?dias=" + encodeURIComponent(dias), {headers: cabecalhosAuth()});
     if (!resp.ok) throw new Error("Não consegui gerar o histórico agora.");
     const nome = ((resp.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/) || [])[1] || "historico.csv";
     const url = URL.createObjectURL(await resp.blob());
@@ -1249,8 +1438,7 @@ document.querySelectorAll("#abas button").forEach((b) => {
 // automatico = true só na atualização periódica; depois de um clique, sempre redesenha.
 async function atualizarTudo(automatico) { await carregarMotos(automatico); await carregarFila(automatico); await carregarResumo(); carregarEstat(!automatico); }
 iniciarMapa();
-atualizarTudo();
-carregarBairros();
+if (chave) aposEntrar(); else mostrarLogin();
 setInterval(() => atualizarTudo(true), 10000);
 </script>
 </body>

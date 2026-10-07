@@ -9,6 +9,15 @@ rota no celular, com mapa, navegação pelo Google Maps e botão de "Entregue".
 
 ## O que ele faz
 
+**Login** (`/painel`)
+- Cada pessoa entra com **e-mail e senha** e fica conectada por até 30 dias (até tocar em "Sair")
+- **Dono**: tudo. **Funcionário**: pedidos, despacho, turno dos motoboys e relatórios (não
+  mexe em regras, cadastro de motoboys nem equipe). O dono cuida da equipe na aba 👤 Conta
+- **Primeiro acesso**: o painel pede para criar a conta do dono, usando a `API_KEY`
+- **Administrador do sistema**: quem tem a `API_KEY` entra pelo link "Entrar com a chave de
+  administrador", com acesso total, e pode definir senha nova para qualquer pessoa (é assim
+  que se recupera o acesso se o dono esquecer a senha). O restaurante não precisa da chave
+
 **Painel do restaurante** (`/painel`)
 - **Pedido rápido**: cole o endereço numa linha só (do WhatsApp, por exemplo) e aperte
   Enter. O painel separa rua, número, bairro, CEP e complemento sozinho, já mostra o
@@ -133,6 +142,8 @@ inicial, até alguém salvar as regras.
 | `banco.py` | Conexão, criação das tabelas e atualização de bancos antigos |
 | `ajustes.py` | Modo de despacho e regras escolhidos no painel |
 | `seguranca.py` | Chave do painel, códigos dos motoboys, limite de tentativas |
+| `contas.py` | Login com e-mail e senha, sessões, dono x funcionário |
+| `api_contas.py` | Endereços de login e da equipe |
 | `mapas.py` | Busca de endereço, distâncias e rotas pelas ruas |
 | `despacho.py` | O algoritmo: agrupar pedidos, escolher motoboy, ordenar paradas |
 | `api_painel.py` | Endereços usados pelo painel do restaurante |
@@ -179,7 +190,11 @@ reais nunca são tocados. Eles também rodam sozinhos no GitHub a cada envio de 
 
 ## Segurança
 
-- O painel exige a `API_KEY` no cabeçalho `X-API-Key`.
+- O painel exige login (sessão de e-mail e senha, no cabeçalho `Authorization: Bearer`) ou a
+  `API_KEY` no cabeçalho `X-API-Key` (administrador e integrações que mandam pedidos).
+- Senhas guardadas só como hash (PBKDF2). Das sessões, o banco guarda só o hash do token.
+  Trocar ou redefinir uma senha desconecta a pessoa de todos os aparelhos.
+- Senha errada várias vezes bloqueia por 15 minutos (por IP e por e-mail).
 - Cada motoboy tem um código próprio e só vê a própria rota. No banco fica só o
   hash do código (PBKDF2), nunca o código em si.
 - Tentativas erradas bloqueiam por 15 minutos (8 por IP; 30 por nome de motoboy).

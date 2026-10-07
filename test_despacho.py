@@ -50,6 +50,8 @@ def banco_limpo():
         con.execute(text("DELETE FROM pedidos"))
         con.execute(text("DELETE FROM motoboys"))
         con.execute(text("DELETE FROM ajustes"))
+        con.execute(text("DELETE FROM sessoes"))
+        con.execute(text("DELETE FROM usuarios"))
     seguranca._erros.clear()
     seguranca._bloqueado_ate.clear()
     yield
@@ -780,3 +782,112 @@ def test_economia_em_reais_e_porcentagem(api):
     g = api.get("/estatisticas?dias=1", headers=CHAVE).json()["geral"]
     assert g["economia_pct"] > 0
     assert g["economia_reais"] == round(g["km_economizados"] * 0.8, 2)
+
+
+# ---------------------------------------------------------------------
+# Login com e-mail e senha
+# ---------------------------------------------------------------------
+SENHA = "senha-boa-123"
+
+
+def criar_dono(api, email="dono@rest.com"):
+    r = api.post("/auth/primeiro-acesso", json={"chave": os.environ["API_KEY"], "nome": "Dono", "email": email, "senha": SENHA})
+    assert r.status_code == 200
+    return {"Authorization": "Bearer " + r.json()["token"]}
+
+
+def entrar(api, email, senha=SENHA):
+    return api.post("/auth/entrar", json={"email": email, "senha": senha})
+
+
+def test_primeiro_acesso_exige_a_chave_e_so_vale_uma_vez(api):
+    assert api.get("/auth/estado").json()["tem_usuarios"] is False
+    r = api.post("/auth/primeiro-acesso", json={"chave": "errada", "nome": "X", "email": "x@x.com", "senha": SENHA})
+    assert r.status_code == 401
+    criar_dono(api)
+    assert api.get("/auth/estado").json()["tem_usuarios"] is True
+    r = api.post("/auth/primeiro-acesso", json={"chave": os.environ["API_KEY"], "nome": "Y", "email": "y@y.com", "senha": SENHA})
+    assert r.status_code == 409
+
+
+def test_login_com_email_e_senha_abre_o_painel(api):
+    criar_dono(api, "Dono@Rest.com")
+    assert entrar(api, "dono@rest.com", "errada!!").status_code == 401
+    r = entrar(api, "  DONO@rest.com ")
+    assert r.status_code == 200 and r.json()["papel"] == "dono"
+    h = {"Authorization": "Bearer " + r.json()["token"]}
+    assert api.get("/pedidos", headers=h).status_code == 200
+    assert api.get("/auth/eu", headers=h).json()["nome"] == "Dono"
+    api.post("/auth/sair", headers=h)
+    assert api.get("/pedidos", headers=h).status_code == 401
+    assert api.get("/pedidos", headers={"Authorization": "Bearer inventado"}).status_code == 401
+
+
+def test_senha_errada_varias_vezes_bloqueia(api):
+    criar_dono(api)
+    for _ in range(seguranca.LIMITE_POR_IP):
+        entrar(api, "dono@rest.com", "errada!!")
+    assert entrar(api, "dono@rest.com").status_code == 429
+
+
+def test_senha_fica_guardada_com_hash(api):
+    criar_dono(api)
+    guardada = sql("SELECT senha FROM usuarios").scalar()
+    assert guardada.startswith("pbkdf2$") and SENHA not in guardada
+    assert len(sql("SELECT token FROM sessoes").scalar()) == 64  # só o hash do token
+
+
+def test_funcionario_opera_mas_nao_muda_regras_nem_motoboys(api):
+    dono = criar_dono(api)
+    r = api.post("/usuarios", json={"nome": "Bia", "email": "bia@rest.com", "senha": SENHA, "papel": "funcionario"}, headers=dono)
+    assert r.status_code == 200
+    func = {"Authorization": "Bearer " + entrar(api, "bia@rest.com").json()["token"]}
+    novo_motoboy(api, "Carlos")
+    pid = novo_pedido(api)["id"]
+    assert api.post("/despachar", headers=func).status_code == 200
+    assert rota("Carlos") == [pid]
+    assert api.post("/motoboys/Carlos/turno", json={"ativo": False}, headers=func).status_code == 200
+    assert api.put("/ajustes", json={"max_paradas": 2}, headers=func).status_code == 403
+    assert api.post("/motoboys", json={"id": "Z", "codigo": CODIGO, "lat": R["lat"], "lng": R["lng"]}, headers=func).status_code == 403
+    assert api.delete("/motoboys/Carlos", headers=func).status_code == 403
+    assert api.get("/usuarios", headers=func).status_code == 403
+    assert api.put("/ajustes", json={"max_paradas": 2}, headers=dono).status_code == 200
+
+
+def test_dono_redefine_senha_e_pessoa_e_desconectada(api):
+    dono = criar_dono(api)
+    api.post("/usuarios", json={"nome": "Bia", "email": "bia@rest.com", "senha": SENHA}, headers=dono)
+    func = {"Authorization": "Bearer " + entrar(api, "bia@rest.com").json()["token"]}
+    api.post("/usuarios/bia@rest.com/senha", json={"senha": "nova-senha-456"}, headers=dono)
+    assert api.get("/pedidos", headers=func).status_code == 401
+    assert entrar(api, "bia@rest.com", "nova-senha-456").status_code == 200
+
+
+def test_administrador_com_a_chave_recupera_a_senha_do_dono(api):
+    criar_dono(api)
+    r = api.post("/usuarios/dono@rest.com/senha", json={"senha": "recuperada-789"}, headers=CHAVE)
+    assert r.status_code == 200
+    assert entrar(api, "dono@rest.com", "recuperada-789").status_code == 200
+
+
+def test_trocar_a_propria_senha(api):
+    dono = criar_dono(api)
+    assert api.post("/auth/senha", json={"atual": "errada!!", "nova": "outra-senha-1"}, headers=dono).status_code == 400
+    r = api.post("/auth/senha", json={"atual": SENHA, "nova": "outra-senha-1"}, headers=dono)
+    assert r.status_code == 200
+    assert api.get("/pedidos", headers=dono).status_code == 401  # sessões antigas encerradas
+    assert api.get("/pedidos", headers={"Authorization": "Bearer " + r.json()["token"]}).status_code == 200
+
+
+def test_nao_remove_a_si_mesmo_nem_o_unico_dono(api):
+    dono = criar_dono(api)
+    assert api.delete("/usuarios/dono@rest.com", headers=dono).status_code == 400
+    assert api.delete("/usuarios/dono@rest.com", headers=CHAVE).status_code == 400
+    api.post("/usuarios", json={"nome": "Bia", "email": "bia@rest.com", "senha": SENHA}, headers=dono)
+    assert api.delete("/usuarios/bia@rest.com", headers=dono).status_code == 200
+
+
+def test_senha_curta_e_email_invalido(api):
+    dono = criar_dono(api)
+    assert api.post("/usuarios", json={"nome": "B", "email": "b@r.com", "senha": "123"}, headers=dono).status_code == 422
+    assert api.post("/usuarios", json={"nome": "B", "email": "semarroba", "senha": SENHA}, headers=dono).status_code == 422
