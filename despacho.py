@@ -181,11 +181,11 @@ def planejar(lotes, estados, max_paradas=MAX_PARADAS_VIAGEM):
     return {mid: s["viagens"] for mid, s in sim.items() if s["recebeu"]}
 
 
-def ler_estados(con, ids=None):
-    """Lê do banco a situação dos motoboys (todos os de turno, ou os ids pedidos)."""
+def ler_estados(con, ids=None, todos=False):
+    """Lê do banco a situação dos motoboys (os de turno, todos com todos=True, ou os ids pedidos)."""
     if ids is None:
         motoboys = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, lat, lng, gps_lat, gps_lng, gps_em FROM motoboys WHERE ativo"))]
+            "SELECT id, lat, lng, gps_lat, gps_lng, gps_em FROM motoboys" + ("" if todos else " WHERE ativo")))]
     else:
         motoboys = [dict(r._mapping) for r in con.execute(text(
             "SELECT id, lat, lng, gps_lat, gps_lng, gps_em FROM motoboys WHERE id = :id"), {"id": ids[0]})]

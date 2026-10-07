@@ -368,6 +368,45 @@ def despachar(corpo: Optional[Despacho] = None):
         return _despachar_sem_trava(plano_ids=corpo.plano if corpo else None)
 
 
+def _motivos(mid, viagens, estados, abertas, novos_ids, plano):
+    """Por que o sistema escolheu este motoboy, em frases curtas, e em quantos
+    minutos ele termina tudo e volta ao restaurante (estimativa em linha reta)."""
+    est, antigas = estados[mid], abertas.get(mid, [])
+    fim = est["volta_s"] + sum(despacho.tempo_viagem(v) for v in viagens)
+    novos = [p for v in viagens for p in v if p["id"] in novos_ids]
+    motivos = []
+    if not antigas and not est["saiu"]:
+        motivos.append("Está livre no restaurante")
+    elif not antigas:
+        motivos.append(f"Está voltando ao restaurante (~{max(1, round(est['volta_s'] / 60))} min)")
+    elif not est["saiu"]:
+        motivos.append(f"Ainda está no restaurante com {len(antigas)} entrega(s): leva tudo na mesma saída")
+    else:
+        motivos.append(f"Está na rua; volta em ~{max(1, round(est['volta_s'] / 60))} min e leva estes na próxima saída")
+    if len(novos) > 1:
+        motivos.append(f"Leva {len(novos)} pedidos juntos, perto um do outro")
+    # Compara com o melhor outro motoboy levando os mesmos pedidos. Quem já recebeu
+    # outros pedidos nesta mesma sugestão só poderia levar estes depois deles.
+    alternativas = []
+    for outro, e in estados.items():
+        if outro == mid:
+            continue
+        if outro in plano:
+            fim_outro = e["volta_s"] + sum(despacho.tempo_viagem(v) for v in plano[outro])
+            alternativas.append((fim_outro + despacho.tempo_viagem(novos), outro, True))
+        else:
+            alternativas.append((e["volta_s"] + despacho.tempo_viagem(list(e["proxima"]) + novos), outro, False))
+    if alternativas:
+        alt, quem, ocupado = min(alternativas)
+        diferenca = round((alt - fim) / 60)
+        if diferenca >= 1:
+            motivos.append(f"Termina ~{diferenca} min antes que {quem}" +
+                           (" (que já leva outros pedidos desta rodada)" if ocupado else ""))
+        else:
+            motivos.append(f"Empata com {quem}; escolhido por ter menos entregas no momento")
+    return {"minutos": max(1, round(fim / 60)), "motivos": motivos}
+
+
 @router.post("/despachar/previa")
 def previa_do_despacho():
     """Mostra o que o despacho faria agora, sem gravar nada: quem leva o quê, em
@@ -401,11 +440,14 @@ def previa_do_despacho():
                 for p in ordem]})
         if saida:
             sugestoes.append({"motoboy": mid, "saiu": estados[mid]["saiu"], "viagens": saida,
-                              "novos": sum(1 for v in saida for p in v["pedidos"] if p["novo"])})
+                              "novos": sum(1 for v in saida for p in v["pedidos"] if p["novo"]),
+                              "km": round(sum(v["km"] for v in saida), 1),
+                              **_motivos(mid, viagens, estados, abertas, novos, plano)})
     km_sem = despacho.km_individual(pedidos)
     return {"sugestoes": sugestoes, "pendentes": len(pedidos), "viagens": viagens_novas,
             "km_com": round(km_com, 1), "km_sem": round(km_sem, 1), "economia_km": round(max(km_sem - km_com, 0), 1),
-            "plano": {mid: [[p["id"] for p in v] for v in viagens] for mid, viagens in plano.items()}}
+            "plano": {mid: [[p["id"] for p in v] for v in viagens] for mid, viagens in plano.items()},
+            "motoboys": sorted(estados)}
 
 
 # ---------------------------------------------------------------------
@@ -523,10 +565,19 @@ def listar_motoboys():
             "SELECT m.id, m.ativo, m.gps_em, m.gps_lat, m.gps_lng, m.telefone, m.tipo, "
             "(SELECT COUNT(*) FROM pedidos p WHERE p.motoboy_id = m.id AND p.status = 'despachado') AS paradas "
             "FROM motoboys m ORDER BY m.id"))]
+        estados, abertas = despacho.ler_estados(con, todos=True)
     for m in linhas:
         m["gps_ativo"] = gps_recente(m.pop("gps_em")) and m["gps_lat"] is not None
         if not m["gps_ativo"]:
             m["gps_lat"] = m["gps_lng"] = None
+        # Resumo para o mapa: situação, km e minutos estimados até terminar e voltar.
+        est, paradas = estados.get(m["id"]), abertas.get(m["id"], [])
+        m["situacao"] = ("em_rota" if est and est["saiu"] and paradas else
+                         "saindo" if paradas else "voltando" if est and est["saiu"] else "disponivel")
+        m["km_rota"] = round(despacho.km_viagem(paradas), 1) if paradas else 0
+        m["minutos_livre"] = max(1, round(est["volta_s"] / 60)) if est and est["volta_s"] else 0
+        if paradas and est and not est["saiu"]:
+            m["minutos_livre"] = max(1, round(despacho.tempo_viagem(paradas, ordenar=False) / 60))
     return {"motoboys": linhas, "centro": RESTAURANTE}
 
 

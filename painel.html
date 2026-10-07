@@ -52,7 +52,7 @@
   .grade{grid-template-columns:minmax(330px,380px) minmax(0,1fr);grid-template-areas:"form mapa" "motos fila"}
  }
  @media (min-width:1280px){
-  .grade{grid-template-columns:minmax(340px,380px) minmax(380px,1fr) minmax(380px,1fr);
+  .grade{grid-template-columns:minmax(320px,360px) minmax(360px,1fr) minmax(460px,1.35fr);
          grid-template-areas:"form fila mapa" "motos fila mapa";grid-template-rows:auto 1fr}
   #colMapa{position:sticky;top:64px}
  }
@@ -99,10 +99,17 @@
  @media (max-width:1279px){ #mapaOp{height:420px} }
  .legenda{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:.82rem;color:var(--suave);align-items:center}
  .legenda span{display:flex;align-items:center;gap:4px}
+ #chipsMoto{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+ .chip{background:#f9fafb;border:1px solid var(--borda);color:var(--texto);border-radius:18px;padding:5px 10px;font-size:.85rem;
+       display:flex;align-items:center;gap:6px;text-align:left;white-space:normal}
+ .chip:hover{border-color:#9ca3af}
+ .chip .st{color:var(--suave);font-size:.78rem}
+ .infoMoto{min-width:190px} .infoMoto ol{margin:4px 0 0;padding-left:18px} .infoMoto .st{color:#6b7280}
  .pin{min-width:26px;height:26px;padding:0 5px;border-radius:13px;color:#fff;font-weight:700;font-size:12px;
       display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45)}
  .pin.rest{background:var(--verde);border-radius:6px}
- .pin.pend{background:var(--vermelho)}
+ .pin.pend{background:#f97316}
+ .pin.pend.atrasado{background:var(--vermelho)}
  .pin.atrasado{animation:pisca 1s infinite}
  .pin.moto{border-radius:6px;font-size:13px;box-shadow:0 0 0 3px rgba(255,255,255,.7),0 1px 6px rgba(0,0,0,.5)}
  @keyframes pisca{50%{transform:scale(1.25);box-shadow:0 0 0 6px rgba(220,38,38,.35)}}
@@ -144,6 +151,10 @@
  .sug-moto .quem{font-weight:700;display:flex;align-items:center;gap:6px}
  .sug-viagem{font-size:.9rem;margin:4px 0 0 16px}
  .sug-viagem .antigo{color:var(--suave)}
+ .sug-numeros{font-size:.9rem;color:var(--suave);margin:2px 0 0 16px}
+ .porque{margin:0 0 0 16px;font-size:.85rem;color:#065f46}
+ .porque li::before{content:"✓ ";font-weight:700}
+ .sug-moto.trocado{border-color:#f59e0b;background:#fffbeb}
  .economia{background:#ecfdf5;color:#065f46;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-weight:600}
 
  /* Estatísticas */
@@ -213,34 +224,42 @@
    <h2 id="tituloPedido">Novo pedido</h2>
    <div id="avisoEdicao" class="aviso-edicao" style="display:none"></div>
    <div class="linha">
-    <input id="rua" placeholder="Rua * (ex.: Rua São Paulo)" style="flex:3">
-    <input id="numero" placeholder="Nº *" style="flex:1;min-width:70px">
-    <label class="sn"><input type="checkbox" id="semNumero"> S/N</label>
+    <input id="rapido" placeholder="📍 Cole ou digite o endereço do cliente (ex.: Rua São Paulo, 123 - Centro)" autocomplete="off" style="font-size:1.02rem;padding:10px">
    </div>
    <div class="linha">
-    <input id="bairro" list="listaBairros" placeholder="Bairro *" autocomplete="off">
-    <datalist id="listaBairros"></datalist>
-    <input id="cep" placeholder="CEP" inputmode="numeric" maxlength="9" style="flex:0 1 110px">
-   </div>
-   <div class="linha"><input id="complemento" placeholder="Complemento (apto 201, bloco B...)"></div>
-   <div class="linha"><input id="referencia" placeholder="Ponto de referência"></div>
-   <div class="linha"><input id="telefone" placeholder="Telefone do cliente ex.: (31) 99999-9999" inputmode="tel" maxlength="16"></div>
-   <div class="linha">
-    <input id="cidade" style="min-width:100px" title="Cidade, UF">
-    <button id="buscar">Buscar endereço</button>
+    <input id="telefone" placeholder="Telefone (opcional)" inputmode="tel" maxlength="16">
+    <button id="buscar">Buscar</button>
     <button id="limpar" class="claro">Limpar</button>
    </div>
-   <div class="ajuda">* obrigatório. Complemento e referência não entram na busca; só aparecem para o motoboy.</div>
+   <details id="maisDetalhes"><summary class="ajuda" style="cursor:pointer">Complemento e referência (opcional)</summary>
+    <div class="linha" style="margin-top:6px"><input id="complemento" placeholder="Complemento (apto 201, bloco B...)"></div>
+    <div class="linha"><input id="referencia" placeholder="Ponto de referência"></div>
+   </details>
+   <details id="detalhado"><summary class="ajuda" style="cursor:pointer">Preencher campo por campo</summary>
+    <div class="linha" style="margin-top:6px">
+     <input id="rua" placeholder="Rua (ex.: Rua São Paulo)" style="flex:3">
+     <input id="numero" placeholder="Nº" style="flex:1;min-width:70px">
+     <label class="sn"><input type="checkbox" id="semNumero"> S/N</label>
+    </div>
+    <div class="linha">
+     <input id="bairro" list="listaBairros" placeholder="Bairro" autocomplete="off">
+     <datalist id="listaBairros"></datalist>
+     <input id="cep" placeholder="CEP" inputmode="numeric" maxlength="9" style="flex:0 1 110px">
+    </div>
+    <div class="linha"><input id="cidade" style="min-width:100px" title="Cidade, UF"></div>
+    <div class="ajuda">O endereço colado acima é separado nestes campos sozinho. Confira se quiser.</div>
+   </details>
    <div id="msgBusca"></div>
-   <ul id="candidatos"></ul>
    <div id="confirmacao" style="display:none">
-    <strong>Confirme o ponto:</strong> arraste o pino até a porta do cliente (ou clique no mapa).
+    <strong id="achado"></strong>
+    <div class="ajuda" style="margin:2px 0 0">Confira o pino (arraste ou clique no mapa se precisar) e confirme. <kbd>Enter</kbd> confirma.</div>
     <div id="mapaConfirma"></div>
     <div class="linha">
-     <button id="confirmar" class="verde">Confirmar pedido neste ponto</button>
+     <button id="confirmar" class="verde" style="flex:1;font-weight:700">Confirmar pedido</button>
      <button id="cancelar" class="cinza">Cancelar</button>
     </div>
    </div>
+   <ul id="candidatos"></ul>
   </section>
  </div>
 
@@ -298,6 +317,7 @@
   <section>
    <h2>Mapa da operação <span class="espaco" style="flex:1"></span><button id="centralizar" class="claro mini">Centralizar</button></h2>
    <div id="mapaOp"></div>
+   <div id="chipsMoto"></div>
    <div class="legenda" id="legenda"></div>
   </section>
  </div>
@@ -371,41 +391,103 @@ $("cep").oninput = () => {
   $("cep").value = d.length > 5 ? d.slice(0, 5) + "-" + d.slice(5) : d;
 };
 
-// Lê os campos do formulário. Devolve {erro: "..."} se faltar algo obrigatório.
+// ---------------------------------------------------------------------
+// Endereço rápido: a pessoa cola o endereço numa linha só (do WhatsApp, do
+// telefone...) e o painel separa rua, número, bairro, CEP e complemento.
+// Os campos separados ficam em "Preencher campo por campo", para conferir.
+// ---------------------------------------------------------------------
+const COMPLEMENTO = /^(apto?|apartamento|ap\.?|casa|bloco|bl\.?|fundos|loja|sala|lote|qd|quadra|andar|cond\.?|condom[ií]nio)\b/i;
+function semAcento(t) { return t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); }
+function ehCidade(t) {
+  const c = semAcento(($("cidade").value || CONFIG.cidade).split(",")[0].trim());
+  const x = semAcento(t).replace(/\s*[-\/,]\s*[a-z]{2}$/, "").trim();
+  return !!c && (x === c || /^[a-z]{2}$/.test(x) || /^brasil$/.test(x));
+}
+function interpretar(texto) {
+  let t = texto.replace(/\s*\n+\s*/g, ", ").replace(/\s+/g, " ").trim();
+  const r = {};
+  const cep = t.match(/\b(\d{5})-?(\d{3})\b/);
+  if (cep) { r.cep = cep[1] + "-" + cep[2]; t = t.replace(cep[0], " ").replace(/\b(cep)\b:?/i, " "); }
+  // Separa em partes por vírgula, ponto e vírgula ou " - ". O número pode estar
+  // sozinho na 2ª parte ("Rua X, 123") ou no fim da 1ª ("Rua X 123").
+  const partes = t.split(/\s*[,;]\s*|\s+[-–]\s+/).map((x) => x.trim()).filter(Boolean)
+    // "Rua X 77 ap 102": separa o complemento que vem logo depois do número.
+    .flatMap((x) => { const c = x.match(/^(.*\d[a-zA-Z]?)\s+((?:ap(?:to|t|artamento)?\.?|casa|bloco|bl\.?|sala|loja|fundos|lote|qd|quadra|andar)\b.*)$/i);
+                      return c ? [c[1], c[2]] : [x]; });
+  const NUM = "(?:n[º°o]?\\.?\\s*)?(\\d+[a-zA-Z]?|s\\/?n)";
+  let m, resto;
+  if (partes.length > 1 && (m = partes[1].match(new RegExp("^" + NUM + "$", "i")))) {
+    r.rua = partes[0]; r.numero = m[1]; resto = partes.slice(2);
+  } else if ((m = partes[0].match(new RegExp("^(.+\\D)\\s+" + NUM + "$", "i")))) {
+    r.rua = m[1]; r.numero = m[2]; resto = partes.slice(1);
+  } else if (partes.length === 1 && (m = partes[0].match(new RegExp("^(.+\\D)\\s+" + NUM + "\\b\\s*(.*)$", "i")))) {
+    r.rua = m[1]; r.numero = m[2]; resto = m[3] ? [m[3]] : [];
+  } else {
+    r.rua = partes[0] || t; resto = partes.slice(1);
+  }
+  r.rua = r.rua.replace(/\s+n[º°o]?\.?$/i, "").trim();
+  if (r.numero && /^s\/?n$/i.test(r.numero)) r.numero = "S/N";
+  resto = resto.filter((x) => !ehCidade(x));
+  const comp = resto.filter((x) => COMPLEMENTO.test(x));
+  const outros = resto.filter((x) => !COMPLEMENTO.test(x));
+  if (comp.length) r.complemento = comp.join(", ");
+  if (outros.length) r.bairro = outros[0].replace(/^bairro\s+/i, "");
+  return r;
+}
+let rapidoMudou = false;
+$("rapido").oninput = () => { rapidoMudou = true; };
+$("rapido").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); $("buscar").click(); } };
+function preencherDoRapido() {
+  const texto = $("rapido").value.trim();
+  if (!texto || !rapidoMudou) return;
+  rapidoMudou = false;
+  const r = interpretar(texto);
+  $("rua").value = r.rua || "";
+  $("semNumero").checked = r.numero === "S/N"; $("numero").disabled = r.numero === "S/N";
+  $("numero").value = r.numero && r.numero !== "S/N" ? r.numero : "";
+  $("bairro").value = r.bairro || "";
+  $("cep").value = r.cep || "";
+  if (r.complemento && !$("complemento").value.trim()) { $("complemento").value = r.complemento; $("maisDetalhes").open = true; }
+}
+
+// Lê os campos do formulário. Devolve {erro: "..."} se faltar algo.
 function lerEndereco() {
+  preencherDoRapido();
   const v = (i) => $(i).value.trim().replace(/\s+/g, " ");
   const e = {rua: v("rua"), numero: $("semNumero").checked ? "S/N" : v("numero"), bairro: v("bairro"),
              complemento: v("complemento"), referencia: v("referencia"), cep: v("cep"), telefone: v("telefone")};
-  const partesCidade = v("cidade").split(",");
+  const partesCidade = (v("cidade") || CONFIG.cidade).split(",");
   e.cidade = (partesCidade[0] || "").trim();
   e.estado = (partesCidade[1] || "").trim();
-  if (e.rua.length < 3) return {erro: "Digite o nome da rua."};
-  if (!e.numero) return {erro: "Digite o número (ou marque \"S/N\")."};
-  if (e.bairro.length < 2) return {erro: "Digite o bairro."};
+  if (e.rua.length < 3) return {erro: "Digite ou cole o endereço do cliente."};
   if (e.cep && e.cep.replace(/\D/g, "").length !== 8) return {erro: "CEP incompleto (8 números). Pode deixar vazio."};
   const digitosTel = e.telefone.replace(/\D/g, "").length;
   if (e.telefone && (digitosTel < 10 || digitosTel > 11)) return {erro: "Telefone incompleto: use DDD + número, ex.: (31) 99999-9999. Pode deixar vazio."};
   // Endereço numa linha, no formato que o Google Maps entende bem. Sem complemento/referência.
   const cidadeUf = e.cidade + (e.estado ? " - " + e.estado : "");
-  e.endereco = e.rua + (e.numero !== "S/N" ? ", " + e.numero : "") + " - " + e.bairro + ", " + cidadeUf + (e.cep ? ", " + e.cep : "");
+  e.endereco = e.rua + (e.numero && e.numero !== "S/N" ? ", " + e.numero : "") + (e.bairro ? " - " + e.bairro : "") +
+               ", " + cidadeUf + (e.cep ? ", " + e.cep : "");
   return e;
 }
 
 let editandoId = null, editandoRotulo = "";  // pedido sendo corrigido, ou null quando é pedido novo
 
 function limparFormulario() {
-  ["rua", "numero", "bairro", "complemento", "referencia", "cep", "telefone"].forEach((i) => $(i).value = "");
+  ["rapido", "rua", "numero", "bairro", "complemento", "referencia", "cep", "telefone"].forEach((i) => $(i).value = "");
   $("semNumero").checked = false; $("numero").disabled = false;
+  $("maisDetalhes").open = false; $("detalhado").open = false;
+  rapidoMudou = false;
   editandoId = null;
   $("tituloPedido").textContent = "Novo pedido";
   $("avisoEdicao").style.display = "none";
-  $("confirmar").textContent = "Confirmar pedido neste ponto";
+  $("confirmar").textContent = "Confirmar pedido";
 }
 
 // Coloca um pedido da fila no formulário para corrigir, já com o mapa no ponto salvo.
 function editarPedido(p) {
   limparFormulario();
   editandoId = p.id; editandoRotulo = p.rotulo || p.id;
+  $("rapido").value = p.endereco;
   $("rua").value = p.rua || p.endereco;  // pedidos antigos só têm o endereço numa linha
   if (p.numero === "S/N") { $("semNumero").checked = true; $("numero").disabled = true; }
   else $("numero").value = p.numero || "";
@@ -414,37 +496,50 @@ function editarPedido(p) {
   $("referencia").value = p.referencia || "";
   $("cep").value = p.cep || "";
   $("telefone").value = p.telefone || "";
+  $("detalhado").open = true; $("maisDetalhes").open = !!(p.complemento || p.referencia);
   $("tituloPedido").textContent = "Corrigindo pedido " + editandoRotulo;
-  $("avisoEdicao").textContent = "Mudou a rua ou o número? Clique em Buscar endereço. Senão, confira o pino e clique em Salvar alterações.";
+  $("avisoEdicao").textContent = "Mudou o endereço? Clique em Buscar. Senão, confira o pino e clique em Salvar alterações.";
   $("avisoEdicao").style.display = "block";
   $("confirmar").textContent = "Salvar alterações";
   $("candidatos").innerHTML = ""; dizer($("msgBusca"), "");
-  mostrarConfirmacao({lat: p.lat, lng: p.lng});
+  mostrarConfirmacao({lat: p.lat, lng: p.lng}, "Ponto salvo do pedido " + editandoRotulo);
   $("tituloPedido").scrollIntoView({behavior: "smooth"});
 }
-$("limpar").onclick = () => { limparFormulario(); $("candidatos").innerHTML = ""; $("confirmacao").style.display = "none"; dizer($("msgBusca"), ""); };
+$("limpar").onclick = () => { limparFormulario(); $("candidatos").innerHTML = ""; $("confirmacao").style.display = "none"; dizer($("msgBusca"), ""); $("rapido").focus(); };
 
 $("buscar").onclick = async () => {
   const e = lerEndereco();
   if (e.erro) { dizer($("msgBusca"), e.erro, "erro"); return; }
   $("candidatos").innerHTML = "";
+  $("buscar").disabled = true;
   dizer($("msgBusca"), "Buscando...");
   try {
     const r = await api("/geocodificar", "POST", {
-      endereco: e.rua + (e.numero !== "S/N" ? ", " + e.numero : "") + ", " + e.bairro + ", " + e.cidade + (e.estado ? ", " + e.estado : ""),
-      rua: e.rua, numero: e.numero, cidade: e.cidade, estado: e.estado, cep: e.cep || null});
-    if (!r.resultados.length) { dizer($("msgBusca"), r.aviso || "Não achei o endereço. Clique no mapa no ponto certo.", "erro"); mostrarConfirmacao(r.centro); return; }
-    dizer($("msgBusca"), "Clique no endereço correto:");
-    r.resultados.forEach((c) => {
-      const b = el("button", {textContent: "Usar este", className: "mini", onclick: () => mostrarConfirmacao(c)});
-      $("candidatos").append(el("li", {}, el("span", {textContent: c.rotulo}), b));
-    });
+      endereco: e.rua + (e.numero && e.numero !== "S/N" ? ", " + e.numero : "") + (e.bairro ? ", " + e.bairro : "") + ", " + e.cidade + (e.estado ? ", " + e.estado : ""),
+      rua: e.rua, numero: e.numero || null, cidade: e.cidade, estado: e.estado, cep: e.cep || null});
+    if (!r.resultados.length) {
+      dizer($("msgBusca"), r.aviso || "Não achei o endereço. Clique no mapa no ponto certo e confirme.", "erro");
+      mostrarConfirmacao(r.centro, "Endereço não encontrado: marque o ponto no mapa");
+    } else {
+      // Já mostra o primeiro resultado no mapa: na maioria das vezes é só confirmar.
+      dizer($("msgBusca"), "");
+      mostrarConfirmacao(r.resultados[0], "📍 " + r.resultados[0].rotulo);
+      if (r.resultados.length > 1) {
+        $("candidatos").append(el("li", {className: "ajuda", textContent: "Não é esse? Outros resultados:"}));
+        r.resultados.slice(1).forEach((c) => {
+          const b = el("button", {textContent: "Usar este", className: "mini claro", onclick: () => mostrarConfirmacao(c, "📍 " + c.rotulo)});
+          $("candidatos").append(el("li", {}, el("span", {textContent: c.rotulo}), b));
+        });
+      }
+    }
   } catch (err) { dizer($("msgBusca"), err.message, "erro"); }
+  $("buscar").disabled = false;
 };
 
 let mapaC = null, pino = null;
-function mostrarConfirmacao(c) {
+function mostrarConfirmacao(c, titulo) {
   $("confirmacao").style.display = "block";
+  $("achado").textContent = titulo || "";
   if (!mapaC) {
     mapaC = L.map("mapaConfirma");
     L.tileLayer(CONFIG.mapaUrl, {maxZoom: 19, subdomains: "abc", attribution: CONFIG.mapaCredito}).addTo(mapaC);
@@ -455,6 +550,7 @@ function mostrarConfirmacao(c) {
   mapaC.setView([c.lat, c.lng], 18);
   pino.setLatLng([c.lat, c.lng]);
   $("confirmacao").scrollIntoView({behavior: "smooth", block: "nearest"});
+  $("confirmar").focus({preventScroll: true});  // Enter já confirma
 }
 
 $("cancelar").onclick = () => { $("confirmacao").style.display = "none"; if (editandoId) { limparFormulario(); dizer($("msgBusca"), "Correção cancelada."); } };
@@ -476,6 +572,7 @@ $("confirmar").onclick = async () => {
       dizer($("msgBusca"), "Pedido " + (r.rotulo || r.id) + " criado.", "ok");
     }
     $("candidatos").innerHTML = ""; limparFormulario(); $("confirmacao").style.display = "none";
+    $("rapido").focus();  // pronto para o próximo pedido
     carregarFila(); carregarResumo(); carregarBairros();
   } catch (err) { dizer($("msgBusca"), err.message, "erro"); }
   $("confirmar").disabled = false;
@@ -652,14 +749,19 @@ async function verSugestao() {
     dizer($("msgDespacho"), "");
     if (r.mensagem) { caixa.style.display = "none"; dizer($("msgDespacho"), r.mensagem, "erro"); return; }
     caixa.innerHTML = "";
-    caixa.append(el("h3", {textContent: "Sugestão de despacho — " + r.pendentes + " pedido(s) em " + r.viagens + " viagem(ns)"}));
+    caixa.append(el("h3", {textContent: "🧠 Sugestão do sistema — " + r.pendentes + (r.pendentes === 1 ? " pedido" : " pedidos") +
+                                         " em " + r.viagens + (r.viagens === 1 ? " viagem" : " viagens")}));
     if (r.economia_km > 0.05)
       caixa.append(el("div", {className: "economia", textContent: "Sem agrupar: ~" + r.km_sem + " km · Com agrupamento: ~" + r.km_com +
                                " km · Economia estimada: ~" + r.economia_km + " km"}));
+    // Plano que será gravado. "Escolher outro" move os pedidos novos de um motoboy para outro.
+    const plano = JSON.parse(JSON.stringify(r.plano));
     r.sugestoes.forEach((sg) => {
       const bloco = el("div", {className: "sug-moto"});
-      bloco.append(el("div", {className: "quem"}, el("span", {className: "bolinha", style: "background:" + corDe(sg.motoboy)}),
-                      document.createTextNode("🛵 " + sg.motoboy + " — " + sg.novos + " pedido(s) novo(s)" + (sg.saiu ? " (para quando voltar)" : ""))));
+      const titulo = el("div", {className: "quem"}, el("span", {className: "bolinha", style: "background:" + corDe(sg.motoboy)}),
+                        document.createTextNode("🛵 " + sg.motoboy + " → " + sg.novos + (sg.novos === 1 ? " pedido" : " pedidos")));
+      bloco.append(titulo,
+        el("div", {className: "sug-numeros", textContent: "📍 ~" + sg.km + " km · ⏱️ ~" + sg.minutos + " min para terminar e voltar" + (sg.saiu ? " · na próxima saída" : "")}));
       sg.viagens.forEach((v, i) => {
         const linha = el("div", {className: "sug-viagem"});
         if (sg.viagens.length > 1) linha.append(el("strong", {textContent: (i + 1) + "ª saída: "}));
@@ -668,16 +770,38 @@ async function verSugestao() {
           linha.append(el("span", {className: p.novo ? "" : "antigo", title: p.endereco,
                                    textContent: p.rotulo + (p.novo ? "" : " (já tinha)")}));
         });
-        linha.append(el("span", {className: "hora", textContent: "  ~" + v.km + " km"}));
         bloco.append(linha);
       });
+      const porque = el("ul", {className: "porque"});
+      sg.motivos.forEach((m) => porque.append(el("li", {textContent: m})));
+      bloco.append(el("div", {className: "ajuda", style: "margin:6px 0 2px;font-weight:600", textContent: "Por que " + sg.motoboy + "?"}), porque);
+
+      // Escolher outro: tira os pedidos novos deste motoboy e coloca numa saída do escolhido.
+      const novosIds = sg.viagens.flatMap((v) => v.pedidos.filter((p) => p.novo).map((p) => p.id));
+      const sel = el("select", {title: "Mandar para outro motoboy"});
+      sel.append(el("option", {value: sg.motoboy, textContent: "Escolher outro..."}));
+      r.motoboys.filter((m) => m !== sg.motoboy).forEach((m) => sel.append(el("option", {value: m, textContent: m})));
+      let atual = sg.motoboy;
+      sel.onchange = () => {
+        const destino = sel.value;
+        plano[atual] = (plano[atual] || []).map((v) => v.filter((id) => !novosIds.includes(id))).filter((v) => v.length);
+        if (!plano[atual].length) delete plano[atual];
+        if (destino === sg.motoboy && r.plano[destino]) plano[destino] = JSON.parse(JSON.stringify(r.plano[destino]));
+        else plano[destino] = (plano[destino] || []).concat([novosIds]);
+        atual = destino;
+        titulo.lastChild.textContent = "🛵 " + destino + " → " + sg.novos + (sg.novos === 1 ? " pedido" : " pedidos") +
+                                       (destino === sg.motoboy ? "" : " (trocado por você)");
+        titulo.firstChild.style.background = corDe(destino);
+        bloco.classList.toggle("trocado", destino !== sg.motoboy);
+      };
+      bloco.append(el("div", {className: "acoes"}, sel));
       caixa.append(bloco);
     });
-    const ok = el("button", {className: "verde", textContent: "Confirmar despacho"});
+    const ok = el("button", {className: "verde", textContent: "✓ Despachar", style: "font-size:1.05rem;font-weight:700;padding:10px 24px"});
     const nao = el("button", {className: "claro", textContent: "Agora não"});
     ok.onclick = async () => {
       ok.disabled = true;
-      try { mensagemDespacho(await api("/despachar", "POST", {plano: r.plano})); caixa.style.display = "none"; atualizarTudo(); }
+      try { mensagemDespacho(await api("/despachar", "POST", {plano: plano})); caixa.style.display = "none"; atualizarTudo(); }
       catch (err) { dizer($("msgDespacho"), err.message, "erro"); ok.disabled = false; }
     };
     nao.onclick = () => { caixa.style.display = "none"; };
@@ -752,7 +876,7 @@ function pinHtml(texto, classe, cor) {
 function desenharMapa() {
   iniciarMapa();
   const assinatura = JSON.stringify([pedidosAtuais.map((p) => [p.id, p.lat, p.lng, p.status, p.motoboy_id, p.ordem, p.atrasado]),
-                                     listaMotoboys.map((m) => [m.id, m.gps_lat, m.gps_lng])]);
+                                     listaMotoboys.map((m) => [m.id, m.gps_lat, m.gps_lng, m.situacao, m.km_rota, m.minutos_livre, m.ativo])]);
   if (assinatura === ultimoMapa) return;
   ultimoMapa = assinatura;
   camadaOp.clearLayers();
@@ -783,19 +907,62 @@ function desenharMapa() {
   });
 
   listaMotoboys.filter((m) => m.gps_ativo).forEach((m) => {
-    L.marker([m.gps_lat, m.gps_lng], {icon: L.divIcon({className: "", html: pinHtml(m.id.slice(0, 2).toUpperCase(), "moto", corDe(m.id)), iconSize: [28, 28]}),
-                                      zIndexOffset: 400}).bindPopup(el("strong", {textContent: m.id + " (GPS)"})).addTo(camadaOp);
+    L.marker([m.gps_lat, m.gps_lng], {icon: L.divIcon({className: "", html: pinHtml("🛵 " + m.id.slice(0, 2).toUpperCase(), "moto", corDe(m.id)), iconSize: [40, 28]}),
+                                      zIndexOffset: 400}).bindPopup(() => infoMotoboy(m)).addTo(camadaOp);
     pontos.push([m.gps_lat, m.gps_lng]);
   });
 
   // Enquadra sozinho só na primeira vez; depois, quem manda no zoom é a pessoa.
   if (!jaEnquadrou && pontos.length > 1) { mapaOp.fitBounds(pontos, {padding: [30, 30], maxZoom: 16}); jaEnquadrou = true; }
 
+  // Um "chip" por motoboy de turno: situação, pedidos, km e quando fica livre. Clique mostra a rota.
+  const chips = $("chipsMoto"); chips.innerHTML = "";
+  listaMotoboys.filter((m) => m.ativo || paradasDe(m.id).length).forEach((m) => {
+    chips.append(el("button", {className: "chip", onclick: () => focarMotoboy(m)},
+      el("span", {className: "bolinha", style: "background:" + corDe(m.id)}), el("strong", {textContent: m.id}),
+      el("span", {className: "st", textContent: textoSituacao(m)})));
+  });
   const leg = $("legenda"); leg.innerHTML = "";
   leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--verde)"}), document.createTextNode("Restaurante")));
-  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--vermelho)"}), document.createTextNode("Na fila")));
-  listaMotoboys.forEach((m) => leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:" + corDe(m.id)}), document.createTextNode(m.id))));
+  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:#f97316"}), document.createTextNode("Pedido aguardando")));
+  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--vermelho)"}), document.createTextNode("Atrasado")));
+  leg.append(el("span", {}, document.createTextNode("Paradas e 🛵 na cor de cada motoboy")));
 }
+const SITUACAO = {disponivel: "🟢 disponível", saindo: "📦 no restaurante, saindo", em_rota: "🚴 em rota", voltando: "↩ voltando"};
+function paradasDe(id) {
+  return pedidosAtuais.filter((p) => p.status === "despachado" && p.motoboy_id === id).sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+}
+function textoSituacao(m) {
+  const ps = paradasDe(m.id);
+  if (!m.ativo) return "fora de turno";
+  let t = SITUACAO[m.situacao] || "";
+  if (ps.length) t += " · " + ps.length + (ps.length === 1 ? " pedido" : " pedidos") + " · ~" + m.km_rota + " km";
+  if (m.minutos_livre) t += " · livre em ~" + m.minutos_livre + " min";
+  return t;
+}
+// Cartão do motoboy (popup do mapa): situação e as paradas na ordem.
+function infoMotoboy(m) {
+  const d = el("div", {className: "infoMoto"}, el("strong", {textContent: m.id + (m.gps_ativo ? " (GPS)" : "")}), el("br"),
+               el("span", {className: "st", textContent: textoSituacao(m)}));
+  const ps = paradasDe(m.id);
+  if (ps.length) {
+    const ol = el("ol");
+    ps.forEach((p) => ol.append(el("li", {textContent: p.rotulo + " — " + p.endereco + (p.atrasado ? " ⚠" : "")})));
+    d.append(ol);
+  }
+  return d;
+}
+// Clique no motoboy: enquadra a rota dele no mapa e mostra as paradas.
+function focarMotoboy(m) {
+  const ps = paradasDe(m.id);
+  const pts = [[CONFIG.restaurante.lat, CONFIG.restaurante.lng], ...ps.map((p) => [p.lat, p.lng])];
+  if (m.gps_ativo) pts.push([m.gps_lat, m.gps_lng]);
+  $("colMapa").scrollIntoView({behavior: "smooth", block: "nearest"});
+  if (pts.length > 1) mapaOp.fitBounds(pts, {padding: [40, 40], maxZoom: 16});
+  const onde = m.gps_ativo ? [m.gps_lat, m.gps_lng] : ps.length ? [ps[0].lat, ps[0].lng] : pts[0];
+  L.popup().setLatLng(onde).setContent(infoMotoboy(m)).openOn(mapaOp);
+}
+
 function focarNoMapa(id) {
   const mk = marcadores[id];
   if (!mk) return;

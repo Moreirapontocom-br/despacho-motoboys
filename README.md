@@ -10,12 +10,16 @@ rota no celular, com mapa, navegação pelo Google Maps e botão de "Entregue".
 ## O que ele faz
 
 **Painel do restaurante** (`/painel`)
-- Cadastro de pedidos com busca de endereço e confirmação do ponto no mapa
+- **Pedido rápido**: cole o endereço numa linha só (do WhatsApp, por exemplo) e aperte
+  Enter. O painel separa rua, número, bairro, CEP e complemento sozinho, já mostra o
+  ponto no mapa e outro Enter confirma. Os campos separados continuam em "Preencher
+  campo por campo"
 - Número do pedido no dia (#1, #2...), fácil de falar no balcão e no telefone
 - **Três modos de despacho**, escolhidos no próprio painel:
   - **Manual**: um clique em "Despachar agora" distribui tudo (ou atribua um a um)
-  - **Assistido**: o botão mostra a sugestão antes (quem leva o quê, em quantas viagens
-    e quantos km o agrupamento economiza) e o funcionário só confirma
+  - **Assistido**: o botão mostra a sugestão antes (quem leva o quê, km e minutos
+    estimados, quantos km o agrupamento economiza e **por que** cada motoboy foi
+    escolhido). O funcionário confirma ou troca o motoboy em "Escolher outro"
   - **Automático**: o sistema despacha sozinho a cada 20 s, seguindo as regras
 - **Regras do despacho** (botão "Regras"): máximo de entregas por viagem, distância
   máxima para o automático mandar sozinho, quanto tempo um pedido sozinho espera um
@@ -23,8 +27,10 @@ rota no celular, com mapa, navegação pelo Google Maps e botão de "Entregue".
 - **Aguardando agrupamento**: pedido sozinho na região aparece em amarelo esperando;
   pedidos que podem ir juntos mostram "Pode ir junto com #12"
 - Edição e cancelamento de pedidos
-- **Mapa da operação** ao lado da lista: pedidos na fila (vermelho), pedidos em rota
-  (na cor de cada motoboy, com a linha da rota) e motoboys com GPS ativo
+- **Mapa da operação**, a maior coluna do painel: pedidos aguardando (laranja),
+  atrasados (vermelho piscando), pedidos em rota na cor de cada motoboy e motoboys com
+  GPS. Embaixo, um cartão por motoboy (disponível, saindo, em rota ou voltando, com
+  pedidos, km e quando fica livre); clicar nele mostra a rota e as paradas no mapa
 - **Pedidos por situação**: 🟢 no prazo, 🟡 atenção (passou de 70% do limite) e
   🔴 atrasado, com faixa vermelha e contador no título da aba
 - **Estatísticas** (hoje, 7 ou 30 dias): entregas, viagens, pedidos agrupados, km rodados

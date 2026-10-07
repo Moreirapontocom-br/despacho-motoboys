@@ -654,3 +654,42 @@ def test_estatisticas_contam_viagens_agrupadas_e_economia(api):
 def test_estatisticas_sem_entregas(api):
     g = api.get("/estatisticas?dias=7", headers=CHAVE).json()["geral"]
     assert g["entregas"] == 0 and g["tempo_medio_min"] is None
+
+
+def test_previa_explica_a_escolha(api):
+    novo_motoboy(api, "Carlos")
+    novo_motoboy(api, "Ana")
+    a = novo_pedido(api, lat=-19.630, lng=-43.240)["id"]
+    api.post(f"/pedidos/{a}/atribuir", json={"motoboy_id": "Ana"}, headers=CHAVE)
+    sql("UPDATE pedidos SET saiu_em = CURRENT_TIMESTAMP WHERE id = :p", p=a)  # Ana saiu para entregar
+    novo_pedido(api, lat=-19.620, lng=-43.230)
+    r = api.post("/despachar/previa", headers=CHAVE).json()
+    sg = r["sugestoes"][0]
+    assert sg["motoboy"] == "Carlos"
+    assert sg["minutos"] >= 1 and sg["km"] > 0
+    assert any("livre" in m for m in sg["motivos"])
+    assert any("antes que Ana" in m for m in sg["motivos"])
+    assert sorted(r["motoboys"]) == ["Ana", "Carlos"]
+
+
+def test_escolher_outro_motoboy_na_previa(api):
+    novo_motoboy(api, "Carlos")
+    novo_motoboy(api, "Ana")
+    a = novo_pedido(api)["id"]
+    r = api.post("/despachar/previa", headers=CHAVE).json()
+    escolhido = r["sugestoes"][0]["motoboy"]
+    outro = "Ana" if escolhido == "Carlos" else "Carlos"
+    api.post("/despachar", json={"plano": {outro: [[a]]}}, headers=CHAVE)
+    assert rota(outro) == [a] and rota(escolhido) == []
+
+
+def test_lista_de_motoboys_mostra_situacao(api):
+    novo_motoboy(api, "Carlos")
+    novo_motoboy(api, "Ana")
+    novo_pedido(api)
+    api.post("/pedidos/" + sql("SELECT id FROM pedidos").scalar() + "/atribuir", json={"motoboy_id": "Ana"}, headers=CHAVE)
+    m = {x["id"]: x for x in api.get("/motoboys", headers=CHAVE).json()["motoboys"]}
+    assert m["Carlos"]["situacao"] == "disponivel" and m["Carlos"]["km_rota"] == 0
+    assert m["Ana"]["situacao"] == "saindo" and m["Ana"]["km_rota"] > 0 and m["Ana"]["minutos_livre"] >= 1
+    api.post("/rotas/Ana/saiu", headers={"X-Codigo": CODIGO})
+    assert api.get("/motoboys", headers=CHAVE).json()["motoboys"][0]["situacao"] == "em_rota"
