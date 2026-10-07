@@ -9,8 +9,12 @@ Quem acessa o painel:
                   Acesso total, entra pelo link "Entrar com a chave de
                   administrador" e pode trocar a senha de qualquer pessoa.
 
-A API_KEY também é usada para criar a primeira conta (do dono) e por sistemas
-que mandam pedidos (integrações). O restaurante não precisa conhecê-la.
+A API_KEY também é usada por sistemas que mandam pedidos (integrações). O
+restaurante nunca precisa conhecê-la.
+
+Convites: o administrador gera um link de convite para o dono criar a conta;
+o dono (ou o administrador) gera convites para funcionários. Cada link vale
+uma vez só e expira em CONVITE_DIAS. No banco fica só o hash do link.
 
 Senhas: no banco fica só o hash (PBKDF2, igual aos códigos dos motoboys).
 Sessões: depois do login, o navegador recebe um token aleatório que dura
@@ -30,6 +34,7 @@ import seguranca
 from horarios import agora_utc
 
 SESSAO_DIAS = 30
+CONVITE_DIAS = 7
 PAPEIS = ("dono", "funcionario")
 SENHA_MINIMA = 8
 
@@ -52,6 +57,15 @@ def preparar(eng):
                 expira_em TIMESTAMP NOT NULL
             )"""))
         con.execute(text("CREATE INDEX IF NOT EXISTS idx_sessoes_email ON sessoes (email)"))
+        con.execute(text("""
+            CREATE TABLE IF NOT EXISTS convites (
+                token TEXT PRIMARY KEY,
+                papel TEXT NOT NULL,
+                criado_por TEXT,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expira_em TIMESTAMP NOT NULL,
+                usado_em TIMESTAMP
+            )"""))
 
 
 preparar(banco.engine)
@@ -142,3 +156,28 @@ def tem_usuarios(con) -> bool:
 def config_ok():
     if not config.API_KEY:
         raise HTTPException(status_code=500, detail="API_KEY não configurada no servidor")
+
+
+# ---------------------------------------------------------------------
+# Convites (link de uso único para criar conta)
+# ---------------------------------------------------------------------
+def criar_convite(con, papel: str, criado_por: str) -> str:
+    token = secrets.token_urlsafe(24)
+    con.execute(text("INSERT INTO convites (token, papel, criado_por, expira_em) VALUES (:t, :p, :c, :x)"),
+                {"t": _hash_token(token), "p": papel, "c": criado_por,
+                 "x": agora_utc() + timedelta(days=CONVITE_DIAS)})
+    return token
+
+
+def ler_convite(con, token: str):
+    """O convite, se ainda vale (não usado e não vencido); senão None."""
+    return con.execute(text(
+        "SELECT token, papel, expira_em FROM convites WHERE token = :t AND usado_em IS NULL AND expira_em > :agora"),
+        {"t": _hash_token(token or ""), "agora": agora_utc()}).first()
+
+
+def usar_convite(con, token: str) -> bool:
+    """Marca como usado. Devolve False se outra pessoa usou no mesmo instante."""
+    r = con.execute(text("UPDATE convites SET usado_em = :agora WHERE token = :t AND usado_em IS NULL AND expira_em > :agora"),
+                    {"t": _hash_token(token or ""), "agora": agora_utc()})
+    return r.rowcount == 1

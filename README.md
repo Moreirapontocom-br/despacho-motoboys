@@ -13,10 +13,15 @@ rota no celular, com mapa, navegação pelo Google Maps e botão de "Entregue".
 - Cada pessoa entra com **e-mail e senha** e fica conectada por até 30 dias (até tocar em "Sair")
 - **Dono**: tudo. **Funcionário**: pedidos, despacho, turno dos motoboys e relatórios (não
   mexe em regras, cadastro de motoboys nem equipe). O dono cuida da equipe na aba 👤 Conta
-- **Primeiro acesso**: o painel pede para criar a conta do dono, usando a `API_KEY`
 - **Administrador do sistema**: quem tem a `API_KEY` entra pelo link "Entrar com a chave de
   administrador", com acesso total, e pode definir senha nova para qualquer pessoa (é assim
-  que se recupera o acesso se o dono esquecer a senha). O restaurante não precisa da chave
+  que se recupera o acesso se o dono esquecer a senha). **A chave fica só com o administrador**
+- **Ativar um restaurante**: o administrador entra, vai em 👤 Conta → "Convidar dono do
+  restaurante" e manda o link (tem botão de WhatsApp). O dono abre e cria e-mail e senha.
+  Só o administrador convida ou cadastra donos
+- **Convidar funcionários**: o dono gera um link em 👤 Conta → "Convidar funcionário"
+- Todo link de convite **vale uma vez só e vence em 7 dias**; no banco fica só o hash dele.
+  Enquanto não existe nenhuma conta, o painel avisa que o sistema ainda não foi ativado
 
 **Painel do restaurante** (`/painel`)
 - **Pedido rápido**: cole o endereço numa linha só (do WhatsApp, por exemplo) e aperte

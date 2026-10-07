@@ -34,6 +34,17 @@ class NovoUsuario(BaseModel):
     papel: Literal["dono", "funcionario"] = "funcionario"
 
 
+class NovoConvite(BaseModel):
+    papel: Literal["dono", "funcionario"] = "funcionario"
+
+
+class AceitarConvite(BaseModel):
+    convite: str = Field(min_length=10, max_length=200)
+    nome: str = Field(min_length=1, max_length=80)
+    email: str = Field(min_length=3, max_length=120)
+    senha: str = Field(max_length=200)
+
+
 class NovaSenha(BaseModel):
     senha: str = Field(max_length=200)
 
@@ -75,6 +86,39 @@ def primeiro_acesso(d: PrimeiroAcesso, request: Request):
                     {"e": email, "n": d.nome.strip(), "s": hash_codigo(d.senha)})
         token = contas.criar_sessao(con, email)
     return {"token": token, "nome": d.nome.strip(), "email": email, "papel": "dono"}
+
+
+@router.get("/auth/convite")
+def ver_convite(convite: str = ""):
+    """Se o link de convite ainda vale, e para qual papel (o painel mostra o formulário certo)."""
+    with banco.engine.connect() as con:
+        c = contas.ler_convite(con, convite)
+    if c is None:
+        return {"valido": False}
+    return {"valido": True, "papel": c.papel}
+
+
+@router.post("/auth/aceitar-convite")
+def aceitar_convite(d: AceitarConvite, request: Request):
+    """Cria a conta a partir de um link de convite (uso único)."""
+    chave_ip = "convite-ip:" + contas.seguranca._ip(request)
+    contas.seguranca._checar_bloqueio(chave_ip)
+    email = _email_valido(d.email)
+    contas.validar_senha(d.senha)
+    with banco.engine.begin() as con:
+        c = contas.ler_convite(con, d.convite)
+        if c is None:
+            contas.seguranca._registrar_erro(chave_ip, contas.seguranca.LIMITE_POR_IP)
+            raise HTTPException(status_code=410, detail="Este convite não vale mais (já foi usado ou venceu). Peça um novo.")
+        existe = con.execute(text("SELECT 1 FROM usuarios WHERE email = :e"), {"e": email}).first()
+        if existe:
+            raise HTTPException(status_code=409, detail="Já existe uma conta com esse e-mail. Use \"Entrar\".")
+        if not contas.usar_convite(con, d.convite):
+            raise HTTPException(status_code=410, detail="Este convite acabou de ser usado. Peça um novo.")
+        con.execute(text("INSERT INTO usuarios (email, nome, senha, papel) VALUES (:e, :n, :s, :p)"),
+                    {"e": email, "n": d.nome.strip(), "s": hash_codigo(d.senha), "p": c.papel})
+        token = contas.criar_sessao(con, email)
+    return {"token": token, "nome": d.nome.strip(), "email": email, "papel": c.papel}
 
 
 @router.post("/auth/entrar")
@@ -132,6 +176,8 @@ def listar_usuarios(acesso=Depends(contas.exigir_gestor)):
 
 @router.post("/usuarios")
 def criar_usuario(d: NovoUsuario, acesso=Depends(contas.exigir_gestor)):
+    if d.papel == "dono" and acesso["papel"] != "admin":
+        raise HTTPException(status_code=403, detail="Só o administrador do sistema cadastra um dono.")
     email = _email_valido(d.email)
     contas.validar_senha(d.senha)
     with banco.engine.begin() as con:
@@ -141,6 +187,17 @@ def criar_usuario(d: NovoUsuario, acesso=Depends(contas.exigir_gestor)):
         if r.rowcount == 0:
             raise HTTPException(status_code=409, detail="Já existe uma conta com esse e-mail.")
     return {"mensagem": f"Conta de {d.nome.strip()} criada."}
+
+
+@router.post("/convites")
+def gerar_convite(d: NovoConvite, acesso=Depends(contas.exigir_gestor)):
+    """Gera um link de convite (uso único, vence em 7 dias). Convite de dono, só o
+    administrador gera: assim só você decide quem é dono de cada sistema."""
+    if d.papel == "dono" and acesso["papel"] != "admin":
+        raise HTTPException(status_code=403, detail="Só o administrador do sistema convida um dono.")
+    with banco.engine.begin() as con:
+        token = contas.criar_convite(con, d.papel, acesso.get("email") or "admin")
+    return {"convite": token, "dias": contas.CONVITE_DIAS, "papel": d.papel}
 
 
 @router.post("/usuarios/{email}/senha")

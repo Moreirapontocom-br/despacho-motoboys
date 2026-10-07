@@ -188,6 +188,8 @@
  .linkzinho{background:none;color:var(--suave);padding:6px 0;font-size:.85rem;text-decoration:underline}
  #quemSou{color:#d1d5db;font-size:.88rem}
  body.funcionario .so-gestor{display:none !important}
+ body:not(.admin) .so-admin{display:none !important}
+ #linkConvite{word-break:break-all;margin-top:8px}
  #listaEquipe li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--borda);flex-wrap:wrap}
  #listaEquipe li:first-child{border-top:0}
 </style>
@@ -203,14 +205,16 @@
    <button id="btEntrar" class="verde grande">Entrar</button>
    <div class="ajuda" style="margin-top:10px">Esqueceu a senha? Peça ao dono do restaurante para definir uma nova.</div>
   </div>
-  <div id="formPrimeiro" style="display:none">
-   <div class="ajuda"><strong>Primeiro acesso:</strong> crie a conta do dono do restaurante. Precisa da chave do sistema
-    (a API_KEY configurada no Render). Depois disso, todo mundo entra com e-mail e senha.</div>
-   <input id="prNome" placeholder="Seu nome" autocomplete="name">
-   <input id="prEmail" type="email" placeholder="E-mail" autocomplete="username">
-   <input id="prSenha" type="password" placeholder="Senha (mínimo 8 caracteres)" autocomplete="new-password">
-   <input id="prChave" type="password" placeholder="Chave do sistema (API_KEY)" autocomplete="off">
-   <button id="btPrimeiro" class="verde grande">Criar conta do dono</button>
+  <div id="formConvite" style="display:none">
+   <div class="ajuda" id="cvTitulo"></div>
+   <input id="cvNome" placeholder="Seu nome" autocomplete="name">
+   <input id="cvEmail" type="email" placeholder="Seu e-mail" autocomplete="username">
+   <input id="cvSenha" type="password" placeholder="Crie uma senha (mínimo 8 caracteres)" autocomplete="new-password">
+   <button id="btConvite" class="verde grande">Criar minha conta</button>
+  </div>
+  <div id="semConta" style="display:none">
+   <div class="ajuda" style="font-size:.95rem">Este sistema ainda não foi ativado. Abra o <strong>link de convite</strong> que você recebeu
+    do administrador para criar a sua conta.</div>
   </div>
   <div id="formAdmin" style="display:none">
    <div class="ajuda">Acesso do administrador do sistema, com a chave (API_KEY).</div>
@@ -413,10 +417,18 @@
    <div class="linha"><input id="eqNome" placeholder="Nome"><input id="eqEmail" type="email" placeholder="E-mail"></div>
    <div class="linha">
     <input id="eqSenha" placeholder="Senha inicial (mínimo 8)" autocomplete="off">
-    <select id="eqPapel"><option value="funcionario">Funcionário</option><option value="dono">Dono</option></select>
+    <select id="eqPapel"><option value="funcionario">Funcionário</option><option value="dono" class="so-admin">Dono</option></select>
     <button id="btEquipe">Adicionar</button>
    </div>
    <div class="ajuda">Passe a senha inicial para a pessoa e peça para ela trocar em "Minha senha".</div>
+   <h2 style="margin-top:14px">🔗 Convidar por link</h2>
+   <div class="ajuda">Mais fácil: gere um link e mande para a pessoa. Ela mesma cria o e-mail e a senha.
+    O link vale <strong>uma vez só</strong> e vence em 7 dias.</div>
+   <div class="linha">
+    <button id="btConvFunc" class="claro">Convidar funcionário</button>
+    <button id="btConvDono" class="claro so-admin">Convidar dono do restaurante</button>
+   </div>
+   <div id="linkConvite"></div>
    <div id="msgEquipe"></div>
   </section>
  </div>
@@ -489,15 +501,31 @@ async function api(caminho, metodo, corpo) {
 
 function dizer(alvo, texto, classe) { alvo.textContent = texto; alvo.className = classe || ""; }
 
+// Link de convite (/painel#convite=...): lido uma vez e apagado da barra de endereço.
+let convite = new URLSearchParams(location.hash.slice(1)).get("convite") || "";
+if (location.hash) history.replaceState(null, "", location.pathname);
+
 async function mostrarLogin(msg) {
   $("telaLogin").style.display = "flex";
   $("formAdmin").style.display = "none"; $("alternarAdmin").textContent = "Entrar com a chave de administrador";
-  let primeiro = false;
-  try { primeiro = !(await (await fetch("/auth/estado")).json()).tem_usuarios; } catch (e) {}
-  $("formPrimeiro").style.display = primeiro ? "block" : "none";
-  $("formEntrar").style.display = primeiro ? "none" : "block";
+  ["formEntrar", "formConvite", "semConta"].forEach((i) => $(i).style.display = "none");
+  let temUsuarios = true, papelConvite = null;
+  try { temUsuarios = (await (await fetch("/auth/estado")).json()).tem_usuarios; } catch (e) {}
+  if (convite) {
+    try { const c = await (await fetch("/auth/convite?convite=" + encodeURIComponent(convite))).json(); if (c.valido) papelConvite = c.papel; } catch (e) {}
+    if (!papelConvite) { convite = ""; msg = msg || "Este link de convite não vale mais (já foi usado ou venceu). Peça um novo."; }
+  }
+  if (papelConvite) {
+    $("cvTitulo").innerHTML = "";
+    $("cvTitulo").append(el("strong", {textContent: "Você foi convidado como " + (papelConvite === "dono" ? "dono do restaurante" : "funcionário") + "."}),
+                         document.createTextNode(" Crie a sua conta:"));
+    $("formConvite").style.display = "block"; $("cvNome").focus();
+  } else if (!temUsuarios) {
+    $("semConta").style.display = "block";
+  } else {
+    $("formEntrar").style.display = "block"; $("lgEmail").focus();
+  }
   dizer($("msgLogin"), msg || "", msg ? "erro" : "");
-  (primeiro ? $("prNome") : $("lgEmail")).focus();
 }
 async function postLogin(caminho, corpo) {
   const resp = await fetch(caminho, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(corpo)});
@@ -518,8 +546,11 @@ async function entrarCom(caminho, corpo, botao) {
   botao.disabled = false;
 }
 $("btEntrar").onclick = () => entrarCom("/auth/entrar", {email: $("lgEmail").value, senha: $("lgSenha").value}, $("btEntrar"));
-$("btPrimeiro").onclick = () => entrarCom("/auth/primeiro-acesso", {nome: $("prNome").value, email: $("prEmail").value,
-                                          senha: $("prSenha").value, chave: $("prChave").value.trim()}, $("btPrimeiro"));
+$("btConvite").onclick = async () => {
+  await entrarCom("/auth/aceitar-convite", {convite: convite, nome: $("cvNome").value, email: $("cvEmail").value,
+                                            senha: $("cvSenha").value}, $("btConvite"));
+  if (eu) convite = "";
+};
 $("btAdmin").onclick = async () => {
   chaveAdmin = $("adChave").value.trim(); sessao = "";
   if (!chaveAdmin) return;
@@ -529,10 +560,11 @@ $("btAdmin").onclick = async () => {
 $("alternarAdmin").onclick = () => {
   const abrir = $("formAdmin").style.display === "none";
   if (!abrir) { mostrarLogin(); return; }
-  $("formAdmin").style.display = "block"; $("formEntrar").style.display = "none"; $("formPrimeiro").style.display = "none";
+  ["formEntrar", "formConvite", "semConta"].forEach((i) => $(i).style.display = "none");
+  $("formAdmin").style.display = "block";
   $("alternarAdmin").textContent = "Voltar para e-mail e senha"; dizer($("msgLogin"), ""); $("adChave").focus();
 };
-[["lgSenha", "btEntrar"], ["lgEmail", "btEntrar"], ["prChave", "btPrimeiro"], ["adChave", "btAdmin"]].forEach(([c, b]) => {
+[["lgSenha", "btEntrar"], ["lgEmail", "btEntrar"], ["cvSenha", "btConvite"], ["adChave", "btAdmin"]].forEach(([c, b]) => {
   $(c).onkeydown = (e) => { if (e.key === "Enter") $(b).click(); };
 });
 
@@ -540,8 +572,9 @@ async function aposEntrar() {
   chave = sessao || chaveAdmin;
   try { eu = await api("/auth/eu"); }
   catch (err) { if ($("telaLogin").style.display !== "flex") mostrarLogin(err.message); else dizer($("msgLogin"), "Não deu certo: confira e tente de novo.", "erro"); return; }
-  $("telaLogin").style.display = "none"; $("lgSenha").value = ""; $("prSenha").value = ""; $("prChave").value = ""; $("adChave").value = "";
+  $("telaLogin").style.display = "none"; $("lgSenha").value = ""; $("cvSenha").value = ""; $("adChave").value = "";
   document.body.classList.toggle("funcionario", eu.papel === "funcionario");
+  document.body.classList.toggle("admin", eu.papel === "admin");
   $("quemSou").textContent = "👤 " + eu.nome + (eu.papel === "dono" ? " (dono)" : eu.papel === "admin" ? "" : " (funcionário)");
   $("sair").style.display = "inline-block";
   $("contaInfo").textContent = eu.tipo === "admin" ? "Você entrou como administrador do sistema (com a chave). O administrador não tem senha."
@@ -591,6 +624,25 @@ async function carregarEquipe() {
     });
   } catch (err) { dizer($("msgEquipe"), err.message, "erro"); }
 }
+async function gerarConvite(papel) {
+  try {
+    const r = await api("/convites", "POST", {papel: papel});
+    const link = location.origin + "/painel#convite=" + encodeURIComponent(r.convite);
+    const caixa = $("linkConvite"); caixa.innerHTML = "";
+    const copiar = el("button", {className: "mini", textContent: "Copiar link"});
+    copiar.onclick = async () => { try { await navigator.clipboard.writeText(link); copiar.textContent = "Copiado!"; } catch (e) { copiar.textContent = "Copie à mão"; } };
+    const texto = "Olá! Este é o seu convite para o painel de entregas" + (restauranteNome ? " do " + restauranteNome : "") +
+                  ". Abra o link e crie a sua conta (vale uma vez só, por " + r.dias + " dias): " + link;
+    caixa.append(el("div", {className: "ok", textContent: "Convite de " + (papel === "dono" ? "dono" : "funcionário") + " criado: " + link + " "}),
+                 el("div", {className: "acoes"}, copiar,
+                    el("a", {className: "zap", target: "_blank", rel: "noopener", textContent: "Enviar no WhatsApp",
+                             href: "https://wa.me/?text=" + encodeURIComponent(texto)})),
+                 el("div", {className: "ajuda", textContent: "O link só aparece agora. Se perder, é só gerar outro."}));
+  } catch (err) { dizer($("msgEquipe"), err.message, "erro"); }
+}
+$("btConvFunc").onclick = () => gerarConvite("funcionario");
+$("btConvDono").onclick = () => gerarConvite("dono");
+
 $("btEquipe").onclick = async () => {
   try {
     const r = await api("/usuarios", "POST", {nome: $("eqNome").value.trim(), email: $("eqEmail").value.trim(),
@@ -1438,7 +1490,7 @@ document.querySelectorAll("#abas button").forEach((b) => {
 // automatico = true só na atualização periódica; depois de um clique, sempre redesenha.
 async function atualizarTudo(automatico) { await carregarMotos(automatico); await carregarFila(automatico); await carregarResumo(); carregarEstat(!automatico); }
 iniciarMapa();
-if (chave) aposEntrar(); else mostrarLogin();
+if (convite) mostrarLogin(); else if (chave) aposEntrar(); else mostrarLogin();
 setInterval(() => atualizarTudo(true), 10000);
 </script>
 </body>

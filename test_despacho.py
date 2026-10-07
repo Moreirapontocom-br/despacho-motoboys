@@ -52,6 +52,7 @@ def banco_limpo():
         con.execute(text("DELETE FROM ajustes"))
         con.execute(text("DELETE FROM sessoes"))
         con.execute(text("DELETE FROM usuarios"))
+        con.execute(text("DELETE FROM convites"))
     seguranca._erros.clear()
     seguranca._bloqueado_ate.clear()
     yield
@@ -891,3 +892,36 @@ def test_senha_curta_e_email_invalido(api):
     dono = criar_dono(api)
     assert api.post("/usuarios", json={"nome": "B", "email": "b@r.com", "senha": "123"}, headers=dono).status_code == 422
     assert api.post("/usuarios", json={"nome": "B", "email": "semarroba", "senha": SENHA}, headers=dono).status_code == 422
+
+
+# ---------------------------------------------------------------------
+# Convites por link
+# ---------------------------------------------------------------------
+def test_administrador_convida_o_dono_e_o_link_vale_uma_vez(api):
+    c = api.post("/convites", json={"papel": "dono"}, headers=CHAVE).json()["convite"]
+    assert api.get("/auth/convite", params={"convite": c}).json() == {"valido": True, "papel": "dono"}
+    r = api.post("/auth/aceitar-convite", json={"convite": c, "nome": "Rafa", "email": "rafa@r.com", "senha": SENHA})
+    assert r.status_code == 200 and r.json()["papel"] == "dono"
+    assert api.get("/pedidos", headers={"Authorization": "Bearer " + r.json()["token"]}).status_code == 200
+    assert api.get("/auth/convite", params={"convite": c}).json()["valido"] is False
+    r = api.post("/auth/aceitar-convite", json={"convite": c, "nome": "Outro", "email": "o@r.com", "senha": SENHA})
+    assert r.status_code == 410
+    assert "convite" not in sql("SELECT token FROM convites").scalar()  # só o hash
+
+
+def test_dono_convida_funcionario_mas_nao_outro_dono(api):
+    dono = criar_dono(api)
+    assert api.post("/convites", json={"papel": "dono"}, headers=dono).status_code == 403
+    assert api.post("/usuarios", json={"nome": "D2", "email": "d2@r.com", "senha": SENHA, "papel": "dono"}, headers=dono).status_code == 403
+    c = api.post("/convites", json={"papel": "funcionario"}, headers=dono).json()["convite"]
+    r = api.post("/auth/aceitar-convite", json={"convite": c, "nome": "Bia", "email": "bia@r.com", "senha": SENHA})
+    assert r.json()["papel"] == "funcionario"
+
+
+def test_convite_vencido_ou_inventado_nao_vale(api):
+    c = api.post("/convites", json={"papel": "funcionario"}, headers=CHAVE).json()["convite"]
+    sql("UPDATE convites SET expira_em = :t", t=horarios.agora_utc() - timedelta(minutes=1))
+    assert api.get("/auth/convite", params={"convite": c}).json()["valido"] is False
+    r = api.post("/auth/aceitar-convite", json={"convite": "inventado-123456", "nome": "X", "email": "x@r.com", "senha": SENHA})
+    assert r.status_code == 410
+    assert api.post("/convites", json={"papel": "funcionario"}).status_code == 401
