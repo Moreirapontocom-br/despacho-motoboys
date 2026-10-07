@@ -26,7 +26,8 @@
  button.mini{padding:4px 9px;font-size:.85rem}
 
  /* Cabeçalho */
- header{position:sticky;top:0;z-index:1000;background:var(--escuro);color:#fff;padding:10px 16px;
+ .topo{position:sticky;top:0;z-index:1000}
+ header{background:var(--escuro);color:#fff;padding:10px 16px;
         display:flex;gap:10px;align-items:center;flex-wrap:wrap}
  header h1{font-size:1.05rem;margin:0 8px 0 0;font-weight:700}
  header .espaco{flex:1}
@@ -47,16 +48,23 @@
 
  /* Grade principal: lado a lado em telas grandes */
  .grade{display:grid;gap:12px;padding:12px 16px 24px;align-items:start;
-        grid-template-columns:minmax(0,1fr);grid-template-areas:"form" "fila" "mapa" "motos"}
+        grid-template-columns:minmax(0,1fr);grid-template-areas:"form" "fila" "mapa"}
  @media (min-width:900px){
-  .grade{grid-template-columns:minmax(330px,380px) minmax(0,1fr);grid-template-areas:"form mapa" "motos fila"}
+  .grade{grid-template-columns:minmax(330px,380px) minmax(0,1fr);grid-template-areas:"form fila" "mapa mapa"}
  }
  @media (min-width:1280px){
-  .grade{grid-template-columns:minmax(320px,360px) minmax(360px,1fr) minmax(460px,1.35fr);
-         grid-template-areas:"form fila mapa" "motos fila mapa";grid-template-rows:auto 1fr}
-  #colMapa{position:sticky;top:64px}
+  .grade{grid-template-columns:minmax(320px,360px) minmax(360px,1fr) minmax(460px,1.35fr);grid-template-areas:"form fila mapa"}
+  #colMapa{position:sticky;top:110px}
  }
- #colForm{grid-area:form} #colMotos{grid-area:motos} #colFila{grid-area:fila} #colMapa{grid-area:mapa}
+ #colForm{grid-area:form} #colFila{grid-area:fila} #colMapa{grid-area:mapa}
+
+ /* Abas */
+ .abas{display:flex;gap:4px;padding:0 16px;background:var(--escuro);overflow-x:auto}
+ .abas button{background:none;color:#9ca3af;border-radius:8px 8px 0 0;padding:9px 16px;font-weight:600}
+ .abas button.sel{background:var(--fundo);color:var(--texto)}
+ .pagina{max-width:900px;margin:0 auto;padding:16px}
+ #economiaHoje{margin:8px 16px 0;display:none;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;border-radius:var(--raio);
+               padding:8px 12px;font-weight:600;font-size:.92rem}
  section{background:var(--cartao);border-radius:var(--raio);padding:14px;margin-bottom:12px;border:1px solid var(--borda)}
  section:last-child{margin-bottom:0}
  h2{margin:0 0 10px;font-size:1rem;display:flex;align-items:center;gap:8px}
@@ -78,7 +86,7 @@
  .grupo{font-size:.8rem;font-weight:700;color:var(--suave);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 6px;display:flex;align-items:center;gap:6px}
  .grupo:first-child{margin-top:0}
  .pedido{border:1px solid var(--borda);border-left:5px solid #cbd5e1;border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#fff}
- .pedido.pendente{border-left-color:var(--vermelho)}
+ .pedido.pendente{border-left-color:#f97316}
  .pedido.atrasado{background:var(--vermelho-claro);border-color:#fecaca;border-left-color:var(--vermelho)}
  .pedido .topo{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
  .rotulo{font-weight:800;font-size:1.05rem;background:none;color:var(--texto);padding:0;border-radius:0}
@@ -141,8 +149,11 @@
  .seg button.sel{background:var(--escuro);color:#fff}
  #infoAuto{font-size:.85rem;color:var(--suave)}
  #regras{display:none;margin:8px 16px 0;background:#fff;border:1px solid var(--borda);border-radius:var(--raio);padding:12px}
- #regras .linha label{display:flex;flex-direction:column;gap:3px;font-size:.85rem;flex:1;min-width:150px}
- #regras input{width:100%}
+ #regras .regra{padding:8px 0;border-top:1px solid var(--borda)}
+ #regras .regra label{font-weight:600}
+ #regras .regra input{width:72px;padding:5px 6px;margin:0 4px;text-align:center}
+ #regras .explica{font-size:.85rem;color:#065f46;margin-top:3px}
+ #regras .explica::before{content:"💡 "}
 
  /* Sugestão (modo assistido) */
  #sugestao{display:none;margin:10px 16px 0;background:#fff;border:2px solid var(--verde);border-radius:var(--raio);padding:12px}
@@ -155,6 +166,7 @@
  .porque{margin:0 0 0 16px;font-size:.85rem;color:#065f46}
  .porque li::before{content:"✓ ";font-weight:700}
  .sug-moto.trocado{border-color:#f59e0b;background:#fffbeb}
+ .economia.sem{background:var(--amarelo);color:#92400e}
  .economia{background:#ecfdf5;color:#065f46;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-weight:600}
 
  /* Estatísticas */
@@ -170,6 +182,7 @@
 </style>
 </head>
 <body>
+<div class="topo">
 <header>
  <h1>Painel do restaurante</h1>
  <div id="login">
@@ -180,6 +193,14 @@
  <span id="relogio"></span>
 </header>
 
+<nav class="abas" id="abas">
+ <button data-aba="abaOperacao" class="sel">🏠 Operação</button>
+ <button data-aba="abaMotoboys">🛵 Motoboys</button>
+ <button data-aba="abaRelatorios">📊 Relatórios</button>
+</nav>
+</div>
+
+<div id="abaOperacao" class="aba">
 <div class="faixa">
  <div class="cartoes">
   <div class="cartao"><div class="num" id="rPendentes">—</div><div class="rot">Na fila</div></div>
@@ -190,31 +211,48 @@
   <div class="cartao"><div class="num" id="rEntregues">—</div><div class="rot">Entregues hoje</div></div>
   <div class="cartao"><div class="num" id="rTempo">—</div><div class="rot">Tempo médio</div></div>
  </div>
- <button id="despachar">Despachar agora</button>
+ <button id="despachar">🧠 Despachar</button>
 </div>
 <div id="barraModo">
  <span class="ajuda" style="margin:0">Despacho:</span>
  <div class="seg" id="seletorModo">
-  <button data-modo="manual" title="O funcionário aperta o botão e o sistema distribui na hora">Manual</button>
-  <button data-modo="assistido" title="O botão mostra a sugestão antes; o funcionário só confirma">Assistido</button>
+  <button data-modo="assistido" title="O sistema sugere; o funcionário confere e confirma">Assistido</button>
   <button data-modo="automatico" title="O sistema despacha sozinho, seguindo as regras">Automático</button>
  </div>
  <button id="abrirRegras" class="claro mini">Regras</button>
  <span id="infoAuto"></span>
 </div>
 <div id="regras">
- <div class="linha">
-  <label>Máximo de entregas por viagem<input id="rgMaxParadas" type="number" min="1" max="10"></label>
-  <label>Não mandar sozinho além de (km, 0 = sem limite)<input id="rgRaio" type="number" min="0" max="50" step="0.5"></label>
+ <h3 style="margin:0 0 4px">⚙️ Como quero que o despacho funcione</h3>
+ <div class="ajuda">💡 O sistema tenta juntar pedidos próximos, mas nunca deixa um pedido esperar mais que o limite que você definir.</div>
+ <div class="regra">
+  <label>Agrupar até <input id="rgMaxParadas" type="number" min="1" max="10"> pedidos por viagem</label>
+  <div class="explica" id="exMaxParadas"></div>
  </div>
- <div class="linha">
-  <label>Pedido sozinho espera um parceiro por (min, 0 = não espera)<input id="rgEspera" type="number" min="0" max="30"></label>
-  <label>Pedido esperando há mais de (min) sai na hora<input id="rgPrioridade" type="number" min="1" max="120"></label>
+ <div class="regra">
+  <label>Juntar pedidos que estejam a até <input id="rgRaioGrupo" type="number" min="0.3" max="10" step="0.5"> km um do outro</label>
+  <div class="explica" id="exRaioGrupo"></div>
  </div>
- <div class="ajuda">As regras de raio e espera valem para o despacho automático. O botão "Despachar" sempre despacha todos os pedidos da fila.</div>
- <div class="linha"><button id="salvarRegras" class="verde">Salvar regras</button><button id="fecharRegras" class="claro">Fechar</button></div>
+ <div class="regra">
+  <label>Esperar outro pedido por até <input id="rgEspera" type="number" min="0" max="30"> minutos</label>
+  <div class="explica" id="exEspera"></div>
+ </div>
+ <div class="regra">
+  <label>Nunca deixar um pedido esperando mais de <input id="rgPrioridade" type="number" min="1" max="120"> minutos</label>
+  <div class="explica" id="exPrioridade"></div>
+ </div>
+ <div class="regra">
+  <label>No automático, não mandar pedidos a mais de <input id="rgRaio" type="number" min="0" max="50" step="0.5"> km do restaurante</label>
+  <div class="explica" id="exRaio"></div>
+ </div>
+ <div class="regra">
+  <label>Cada km rodado custa R$ <input id="rgCusto" type="number" min="0" max="20" step="0.05"></label>
+  <div class="explica" id="exCusto"></div>
+ </div>
+ <div class="linha" style="margin-top:8px"><button id="salvarRegras" class="verde">Salvar regras</button><button id="fecharRegras" class="claro">Fechar</button></div>
  <div id="msgRegras"></div>
 </div>
+<div id="economiaHoje"></div>
 <div id="sugestao"></div>
 <div id="msgDespacho"></div>
 
@@ -266,7 +304,28 @@
   </section>
  </div>
 
- <div id="colMotos">
+
+ <div id="colFila">
+  <section>
+   <h2>Pedidos</h2>
+   <div id="alertaAtraso"></div>
+   <div id="fila"><div class="vazio">Digite a chave do restaurante no topo e clique em Entrar.</div></div>
+  </section>
+ </div>
+
+ <div id="colMapa">
+  <section>
+   <h2>Mapa da operação <span class="espaco" style="flex:1"></span><button id="centralizar" class="claro mini">Centralizar</button></h2>
+   <div id="mapaOp"></div>
+   <div id="chipsMoto"></div>
+   <div class="legenda" id="legenda"></div>
+  </section>
+ </div>
+</main>
+</div>
+
+<div id="abaMotoboys" class="aba" style="display:none">
+ <div class="pagina">
   <section>
    <h2>Motoboys <span class="contador" id="contMoto">0</span></h2>
    <ul id="listaMoto"></ul>
@@ -289,7 +348,11 @@
    <div id="msgMoto"></div>
    <div id="qrMoto"></div>
   </section>
+ </div>
+</div>
 
+<div id="abaRelatorios" class="aba" style="display:none">
+ <div class="pagina">
   <section>
    <h2>Estatísticas <span class="espaco" style="flex:1"></span>
     <select id="periodoEstat" style="padding:4px"><option value="1">Hoje</option><option value="7">7 dias</option><option value="30">30 dias</option></select></h2>
@@ -307,24 +370,7 @@
    <div id="msgHistorico"></div>
   </section>
  </div>
-
- <div id="colFila">
-  <section>
-   <h2>Pedidos</h2>
-   <div id="alertaAtraso"></div>
-   <div id="fila"><div class="vazio">Digite a chave do restaurante no topo e clique em Entrar.</div></div>
-  </section>
- </div>
-
- <div id="colMapa">
-  <section>
-   <h2>Mapa da operação <span class="espaco" style="flex:1"></span><button id="centralizar" class="claro mini">Centralizar</button></h2>
-   <div id="mapaOp"></div>
-   <div id="chipsMoto"></div>
-   <div class="legenda" id="legenda"></div>
-  </section>
- </div>
-</main>
+</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <!-- QR Code do link do motoboy (qrcode-generator 1.4.4, licença MIT). integrity = hash do arquivo publicado no npm. -->
@@ -731,14 +777,8 @@ function mensagemDespacho(r) {
   dizer($("msgDespacho"), partes.length ? "Despachado! " + partes.join(" | ") : "Nada mudou.", "ok");
 }
 
-$("despachar").onclick = async () => {
-  if (modoAtual === "assistido") { verSugestao(); return; }
-  $("despachar").disabled = true;
-  dizer($("msgDespacho"), "Despachando...");
-  try { mensagemDespacho(await api("/despachar", "POST")); atualizarTudo(); }
-  catch (err) { dizer($("msgDespacho"), err.message, "erro"); }
-  $("despachar").disabled = false;
-};
+// O botão nunca despacha às cegas: sempre mostra antes o que o sistema vai fazer.
+$("despachar").onclick = () => verSugestao();
 
 // ---------------------------------------------------------------------
 // Modo assistido: mostra a sugestão (quem leva o quê e a economia) e o
@@ -755,9 +795,13 @@ async function verSugestao() {
     caixa.innerHTML = "";
     caixa.append(el("h3", {textContent: "🧠 Sugestão do sistema — " + r.pendentes + (r.pendentes === 1 ? " pedido" : " pedidos") +
                                          " em " + r.viagens + (r.viagens === 1 ? " viagem" : " viagens")}));
-    if (r.economia_km > 0.05)
-      caixa.append(el("div", {className: "economia", textContent: "Sem agrupar: ~" + r.km_sem + " km · Com agrupamento: ~" + r.km_com +
-                               " km · Economia estimada: ~" + r.economia_km + " km"}));
+    if (r.agrupou && r.economia_km > 0.05)
+      caixa.append(el("div", {className: "economia", textContent: "📍 Total: ~" + r.km_com + " km · 📉 Economia estimada: ~" + r.economia_km +
+                               " km (" + r.economia_pct + "% menos que mandar um por um)" +
+                               (r.economia_reais ? " · 💰 ~" + reais(r.economia_reais) : "")}));
+    else
+      caixa.append(el("div", {className: "economia sem", textContent: "⚠️ Nenhum agrupamento vantajoso encontrado. " +
+                               "Cada um vai sozinho, para quem consegue entregar mais rápido. Total: ~" + r.km_com + " km"}));
     // Plano que será gravado. "Escolher outro" move os pedidos novos de um motoboy para outro.
     const plano = JSON.parse(JSON.stringify(r.plano));
     r.sugestoes.forEach((sg) => {
@@ -820,10 +864,12 @@ async function verSugestao() {
 // ---------------------------------------------------------------------
 // Modo de despacho e regras
 // ---------------------------------------------------------------------
-let modoAtual = "manual", ultimoAuto = null;
-const NOMES_BOTAO = {manual: "Despachar agora", assistido: "Ver sugestão de despacho", automatico: "Despachar tudo agora"};
+let modoAtual = "assistido", ultimoAuto = null;
+const NOMES_BOTAO = {assistido: "🧠 Despachar", automatico: "🧠 Despachar agora"};
+function reais(v) { return "R$ " + Number(v).toFixed(2).replace(".", ","); }
 function mostrarModo(modo, auto) {
-  modoAtual = modo || "manual";
+  // "manual" é de versões antigas: hoje funciona igual ao assistido.
+  modoAtual = modo === "automatico" ? "automatico" : "assistido";
   if (auto !== undefined) ultimoAuto = auto;
   auto = ultimoAuto;
   document.querySelectorAll("#seletorModo button").forEach((b) => b.classList.toggle("sel", b.dataset.modo === modoAtual));
@@ -831,7 +877,7 @@ function mostrarModo(modo, auto) {
   $("despachar").textContent = NOMES_BOTAO[modoAtual] + (pend ? " (" + pend + ")" : "");
   let info = "";
   if (modoAtual === "automatico") info = "🤖 Automático ligado" + (auto && auto.quando ? " · último às " + auto.quando + ": " + auto.texto : " · esperando pedidos");
-  else if (modoAtual === "assistido") info = "O botão mostra a sugestão antes de despachar.";
+  else info = "O sistema sugere quem leva cada pedido; você confere e confirma.";
   $("infoAuto").textContent = info;
 }
 document.querySelectorAll("#seletorModo button").forEach((b) => {
@@ -841,11 +887,28 @@ document.querySelectorAll("#seletorModo button").forEach((b) => {
     catch (err) { dizer($("msgDespacho"), err.message, "erro"); }
   };
 });
+// Cada regra mostra, em uma frase, o que ela faz com o número escolhido.
+function explicarRegras() {
+  const n = (i) => Number(String($(i).value).replace(",", ".")) || 0;
+  const mp = n("rgMaxParadas"), rg = n("rgRaioGrupo"), es = n("rgEspera"), pr = n("rgPrioridade"), ra = n("rgRaio"), ck = n("rgCusto");
+  $("exMaxParadas").textContent = mp <= 1 ? "Cada pedido sai numa viagem só dele." :
+    "O sistema tenta colocar até " + mp + " pedidos na mesma saída do motoboy.";
+  $("exRaioGrupo").textContent = "Só vão juntos pedidos a até " + String(rg).replace(".", ",") + " km um do outro. Mais longe que isso, cada um segue sozinho.";
+  $("exEspera").textContent = es <= 0 ? "Pedido sozinho na região sai na hora, sem esperar." :
+    "Um pedido sozinho na região pode esperar até " + es + " min por outro pedido perto, para ir junto.";
+  $("exPrioridade").textContent = "Passou de " + pr + " min na fila, o pedido sai na hora, mesmo sem parceiro de viagem.";
+  $("exRaio").textContent = ra <= 0 ? "Sem limite: o automático manda qualquer pedido." :
+    "Pedidos a mais de " + String(ra).replace(".", ",") + " km ficam para você decidir (o automático não manda).";
+  $("exCusto").textContent = ck <= 0 ? "Informe para ver a economia em reais (combustível, desgaste ou o que você paga por km)." :
+    "Cada 10 km economizados = " + reais(ck * 10) + ".";
+}
+["rgMaxParadas", "rgRaioGrupo", "rgEspera", "rgPrioridade", "rgRaio", "rgCusto"].forEach((i) => $(i).oninput = explicarRegras);
 $("abrirRegras").onclick = async () => {
   try {
     const a = (await api("/ajustes")).ajustes;
-    $("rgMaxParadas").value = a.max_paradas; $("rgRaio").value = a.raio_max_km;
-    $("rgEspera").value = a.espera_agrupamento_min; $("rgPrioridade").value = a.prioridade_min;
+    $("rgMaxParadas").value = a.max_paradas; $("rgRaio").value = a.raio_max_km; $("rgRaioGrupo").value = a.raio_agrupamento_km;
+    $("rgEspera").value = a.espera_agrupamento_min; $("rgPrioridade").value = a.prioridade_min; $("rgCusto").value = a.custo_km;
+    explicarRegras();
     $("regras").style.display = "block"; dizer($("msgRegras"), "");
   } catch (err) { dizer($("msgDespacho"), err.message, "erro"); }
 };
@@ -853,9 +916,9 @@ $("fecharRegras").onclick = () => { $("regras").style.display = "none"; };
 $("salvarRegras").onclick = async () => {
   const n = (i) => Number(String($(i).value).replace(",", "."));
   try {
-    await api("/ajustes", "PUT", {max_paradas: n("rgMaxParadas"), raio_max_km: n("rgRaio"),
-                                  espera_agrupamento_min: n("rgEspera"), prioridade_min: n("rgPrioridade")});
-    dizer($("msgRegras"), "Regras salvas.", "ok"); carregarFila();
+    await api("/ajustes", "PUT", {max_paradas: n("rgMaxParadas"), raio_max_km: n("rgRaio"), raio_agrupamento_km: n("rgRaioGrupo"),
+                                  espera_agrupamento_min: n("rgEspera"), prioridade_min: n("rgPrioridade"), custo_km: n("rgCusto")});
+    dizer($("msgRegras"), "Regras salvas.", "ok"); carregarFila(); carregarEstat(true);
   } catch (err) { dizer($("msgRegras"), "Confira os números: " + err.message, "erro"); }
 };
 
@@ -1117,24 +1180,37 @@ function cartaoEstat(valor, rotuloTexto, variacao, menorEhMelhor) {
   return c;
 }
 let ultimaEstat = 0;
+// Faixa verde na aba Operação: o que o sistema economizou hoje.
+function mostrarEconomiaHoje(g) {
+  const caixa = $("economiaHoje");
+  if (!g || !g.entregas || !g.km_economizados) { caixa.style.display = "none"; return; }
+  caixa.textContent = "🧠 Hoje: " + g.entregas + " entregas em " + g.viagens + " viagens · 📉 ~" + g.km_economizados +
+    " km economizados (" + g.economia_pct + "% menos deslocamento)" + (g.economia_reais ? " · 💰 ~" + reais(g.economia_reais) : "");
+  caixa.style.display = "block";
+}
 async function carregarEstat(forcar) {
   if (!chave || (!forcar && Date.now() - ultimaEstat < 60000)) return;
   ultimaEstat = Date.now();
   try {
-    const r = await api("/estatisticas?dias=" + $("periodoEstat").value);
+    const periodo = $("periodoEstat").value;
+    if (periodo !== "1") api("/estatisticas?dias=1").then((h) => mostrarEconomiaHoje(h.geral)).catch(() => {});
+    const r = await api("/estatisticas?dias=" + periodo);
+    if (periodo === "1") mostrarEconomiaHoje(r.geral);
     const g = r.geral, cmp = r.comparacao, caixa = $("estat");
     caixa.innerHTML = "";
     if (!g.entregas) { caixa.append(el("div", {className: "vazio", textContent: "Nenhuma entrega concluída neste período."})); return; }
     const fmt = (v, suf) => v === null || v === undefined ? "—" : v + (suf || "");
-    caixa.append(el("div", {className: "estat"},
+    caixa.append(el("div", {className: "estat"}, ...[
       cartaoEstat(g.entregas, "entregas", cmp.entregas, false),
       cartaoEstat(g.motoboys, "motoboys"),
       cartaoEstat(g.viagens, "viagens", cmp.viagens_por_entrega, true),
       cartaoEstat(g.agrupados, "pedidos agrupados"),
       cartaoEstat("~" + g.km, "km rodados", cmp.km_por_entrega, true),
       cartaoEstat("~" + g.km_economizados, "km economizados"),
+      cartaoEstat(g.economia_pct === null ? "—" : g.economia_pct + "%", "menos deslocamento"),
+      g.economia_reais ? cartaoEstat(reais(g.economia_reais), "💰 economizados") : null,
       cartaoEstat(fmt(g.tempo_medio_min, " min"), "tempo médio", cmp.tempo_medio_min, true),
-      cartaoEstat(fmt(g.no_prazo_pct, "%"), "no prazo (" + Math.round(r.prazo_min) + " min)")));
+      cartaoEstat(fmt(g.no_prazo_pct, "%"), "no prazo (" + Math.round(r.prazo_min) + " min)")].filter(Boolean)));
     caixa.append(el("div", {className: "ajuda", textContent: "▲▼ comparado com o período anterior (km e viagens por entrega). Km estimados."}));
     const t = el("table", {className: "motos"});
     t.append(el("tr", {}, ...["Motoboy", "Entregas", "Viagens", "No prazo", "Em rota", "~km"].map((h) => el("th", {textContent: h}))));
@@ -1155,6 +1231,19 @@ async function carregarBairros() {
     r.bairros.forEach((b) => dl.append(el("option", {value: b})));
   } catch (e) { /* sugestão é só uma ajuda; sem ela o campo funciona igual */ }
 }
+
+// ---------------------------------------------------------------------
+// Abas: Operação (dia a dia), Motoboys (cadastro e acesso), Relatórios
+// ---------------------------------------------------------------------
+document.querySelectorAll("#abas button").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll("#abas button").forEach((x) => x.classList.toggle("sel", x === b));
+    document.querySelectorAll(".aba").forEach((a) => a.style.display = a.id === b.dataset.aba ? "block" : "none");
+    if (b.dataset.aba === "abaOperacao" && mapaOp) setTimeout(() => mapaOp.invalidateSize(), 50);
+    if (b.dataset.aba === "abaRelatorios") carregarEstat(true);
+    window.scrollTo(0, 0);
+  };
+});
 
 // carregarMotos primeiro: as cores e o seletor de "Atribuir" dependem da lista de motoboys.
 // automatico = true só na atualização periódica; depois de um clique, sempre redesenha.

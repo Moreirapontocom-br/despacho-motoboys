@@ -3,10 +3,11 @@ Ajustes do despacho que o restaurante escolhe no próprio painel (sem mexer no
 Render): o modo de despacho e as regras usadas pelo despacho automático.
 
 Modos:
-    manual       o funcionário aperta "Despachar agora" (ou atribui um a um)
-    assistido    o botão primeiro mostra a sugestão (quem leva o quê e a
+    assistido    o botão "Despachar" mostra a sugestão (quem leva o quê e a
                  economia estimada) e o funcionário só confirma
     automatico   o sistema despacha sozinho, seguindo as regras abaixo
+    manual       versões antigas; hoje funciona igual ao assistido (o botão
+                 sempre mostra a sugestão antes de despachar)
 """
 
 import json
@@ -18,7 +19,7 @@ from config import MAX_PARADAS_VIAGEM
 MODOS = ("manual", "assistido", "automatico")
 
 PADROES = {
-    "modo": "manual",
+    "modo": "assistido",
     # Máximo de entregas numa mesma saída do restaurante.
     "max_paradas": MAX_PARADAS_VIAGEM,
     # Pedidos mais longe que isto do restaurante não são despachados sozinhos
@@ -29,10 +30,16 @@ PADROES = {
     "espera_agrupamento_min": 3,
     # Pedido esperando há mais que isto sai na hora, mesmo sem parceiro.
     "prioridade_min": 20,
+    # Pedidos a até esta distância um do outro podem ir na mesma viagem.
+    "raio_agrupamento_km": 2.0,
+    # Quanto custa cada km rodado (combustível, desgaste, taxa do motoboy...).
+    # Usado só para mostrar a economia em reais. 0 = não mostrar em reais.
+    "custo_km": 0,
 }
 
 # Limites aceitos para cada número (mínimo, máximo).
-LIMITES = {"max_paradas": (1, 10), "raio_max_km": (0, 50), "espera_agrupamento_min": (0, 30), "prioridade_min": (1, 120)}
+LIMITES = {"max_paradas": (1, 10), "raio_max_km": (0, 50), "espera_agrupamento_min": (0, 30), "prioridade_min": (1, 120),
+           "raio_agrupamento_km": (0.3, 10), "custo_km": (0, 20)}
 
 
 def ler(con):

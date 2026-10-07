@@ -78,6 +78,8 @@ class Regras(BaseModel):
     raio_max_km: Optional[float] = Field(default=None, ge=0, le=50)
     espera_agrupamento_min: Optional[float] = Field(default=None, ge=0, le=30)
     prioridade_min: Optional[float] = Field(default=None, ge=1, le=120)
+    raio_agrupamento_km: Optional[float] = Field(default=None, ge=0.3, le=10)
+    custo_km: Optional[float] = Field(default=None, ge=0, le=20)
 
 
 class Turno(BaseModel):
@@ -285,7 +287,7 @@ def _ler_pendentes(con):
 def _planejar(pedidos, estados, regras):
     """Plano do despacho: {motoboy: [viagem, viagem...]}, cada viagem uma lista de paradas
     (inclui as paradas antigas de quem ainda não saiu, que vão na mesma viagem)."""
-    lotes = despacho.agrupar_pedidos(pedidos, raio_km=despacho.RAIO_AGRUPAMENTO_KM,
+    lotes = despacho.agrupar_pedidos(pedidos, raio_km=regras.get("raio_agrupamento_km") or despacho.RAIO_AGRUPAMENTO_KM,
                                      max_por_lote=min(4, regras["max_paradas"]))
     return despacho.planejar(lotes, estados, regras["max_paradas"])
 
@@ -445,8 +447,13 @@ def previa_do_despacho():
                               "km": round(sum(v["km"] for v in saida), 1),
                               **_motivos(mid, viagens, estados, abertas, novos, plano)})
     km_sem = despacho.km_individual(pedidos)
-    return {"sugestoes": sugestoes, "pendentes": len(pedidos), "viagens": viagens_novas,
-            "km_com": round(km_com, 1), "km_sem": round(km_sem, 1), "economia_km": round(max(km_sem - km_com, 0), 1),
+    economia = max(km_sem - km_com, 0)
+    # Nenhuma viagem junta 2 pedidos novos: cada um vai sozinho, para quem entrega mais rápido.
+    agrupou = any(sum(1 for p in v["pedidos"] if p["novo"]) > 1 for sg in sugestoes for v in sg["viagens"])
+    return {"sugestoes": sugestoes, "pendentes": len(pedidos), "viagens": viagens_novas, "agrupou": agrupou,
+            "km_com": round(km_com, 1), "km_sem": round(km_sem, 1), "economia_km": round(economia, 1),
+            "economia_pct": round(100 * economia / km_sem) if km_sem else 0,
+            "economia_reais": round(economia * regras["custo_km"], 2) if regras["custo_km"] else None,
             "plano": {mid: [[p["id"] for p in v] for v in viagens] for mid, viagens in plano.items()},
             "motoboys": sorted(estados)}
 
@@ -679,6 +686,8 @@ def estatisticas(dias: int = 1):
     Os quilômetros são estimados (linha reta x FATOR_RUAS). "km_economizados" é a
     diferença para o caso de cada entrega ter sido uma viagem separada."""
     dias = max(1, min(dias, 365))
+    with banco.engine.connect() as con:
+        custo_km = ajustes.ler(con)["custo_km"]
     inicio = inicio_do_dia_utc(dias_atras=dias - 1)
     inicio_anterior = inicio_do_dia_utc(dias_atras=2 * dias - 1)
     with banco.engine.connect() as con:
@@ -690,6 +699,10 @@ def estatisticas(dias: int = 1):
 
     geral = _numeros_do_periodo(atual)
     geral["motoboys"] = len({p["motoboy_id"] for p in atual if p["motoboy_id"]})
+    # Quanto menos se rodou, comparado com cada entrega ser uma viagem separada.
+    sem = geral["km"] + geral["km_economizados"]
+    geral["economia_pct"] = round(100 * geral["km_economizados"] / sem) if sem else None
+    geral["economia_reais"] = round(geral["km_economizados"] * custo_km, 2) if custo_km else None
     antes = _numeros_do_periodo(anterior)
     comparacao = {k: _variacao(geral[k], antes[k]) for k in ("km_por_entrega", "tempo_medio_min", "entregas")}
     if geral["entregas"] and antes["entregas"]:

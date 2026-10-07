@@ -271,7 +271,7 @@ RAIO_AGRUPAMENTO_KM = 2.0
 
 def situacao_fila(pendentes, regras, agora=None):
     """Para cada pedido pendente (dicts com id, lat, lng, criado_em), devolve
-    {id: {"vizinhos": [ids a até 2 km], "aguardando": bool, "longe": bool, "km": float}}.
+    {id: {"vizinhos": [ids perto (regra "raio_agrupamento_km")], "aguardando": bool, "longe": bool, "km": float}}.
 
     aguardando: o pedido está sozinho, é recente e ainda vale esperar um parceiro
                 de viagem (regra "espera_agrupamento_min").
@@ -281,10 +281,11 @@ def situacao_fila(pendentes, regras, agora=None):
     espera = regras.get("espera_agrupamento_min") or 0
     prioridade = regras.get("prioridade_min") or 0
     raio_max = regras.get("raio_max_km") or 0
+    raio_grupo = regras.get("raio_agrupamento_km") or RAIO_AGRUPAMENTO_KM
     resultado = {}
     for p in pendentes:
         vizinhos = [q["id"] for q in pendentes if q["id"] != p["id"]
-                    and haversine(p["lat"], p["lng"], q["lat"], q["lng"]) <= RAIO_AGRUPAMENTO_KM]
+                    and haversine(p["lat"], p["lng"], q["lat"], q["lng"]) <= raio_grupo]
         criado = parse_ts(p.get("criado_em"))
         minutos = (agora - criado).total_seconds() / 60 if criado else 0
         km = haversine(RESTAURANTE["lat"], RESTAURANTE["lng"], p["lat"], p["lng"])

@@ -551,7 +551,7 @@ def test_situacao_atrasado(api):
 
 
 def test_ajustes_salvam_e_validam(api):
-    assert api.get("/ajustes", headers=CHAVE).json()["ajustes"]["modo"] == "manual"
+    assert api.get("/ajustes", headers=CHAVE).json()["ajustes"]["modo"] == "assistido"
     r = api.put("/ajustes", json={"modo": "assistido", "max_paradas": 3}, headers=CHAVE)
     assert r.json()["ajustes"]["modo"] == "assistido" and r.json()["ajustes"]["max_paradas"] == 3
     assert api.put("/ajustes", json={"modo": "qualquer"}, headers=CHAVE).status_code == 422
@@ -748,3 +748,35 @@ def test_painel_mostra_ha_quanto_tempo_veio_o_gps(api):
     api.post("/rotas/Carlos/posicao", json={"lat": R["lat"] - 0.01, "lng": R["lng"]}, headers={"X-Codigo": CODIGO})
     m = api.get("/motoboys", headers=CHAVE).json()["motoboys"][0]
     assert m["gps_ativo"] is True and 0 <= m["gps_segundos"] < 30
+
+
+# ---------------------------------------------------------------------
+# Distância de agrupamento e economia em reais
+# ---------------------------------------------------------------------
+def test_distancia_de_agrupamento_ajustavel(api):
+    novo_motoboy(api, "Carlos")
+    novo_motoboy(api, "Ana")
+    novo_pedido(api, lat=-19.630, lng=-43.240)
+    novo_pedido(api, lat=-19.645, lng=-43.240)  # ~1,7 km do outro
+    assert api.post("/despachar/previa", headers=CHAVE).json()["agrupou"] is True
+    api.put("/ajustes", json={"raio_agrupamento_km": 1}, headers=CHAVE)
+    r = api.post("/despachar/previa", headers=CHAVE).json()
+    assert r["agrupou"] is False and r["viagens"] == 2
+    assert all(not p["agrupar_com"] for p in api.get("/pedidos", headers=CHAVE).json()["pedidos"])
+
+
+def test_economia_em_reais_e_porcentagem(api):
+    novo_motoboy(api, "Carlos")
+    a = novo_pedido(api, lat=-19.630, lng=-43.240)["id"]
+    b = novo_pedido(api, lat=-19.631, lng=-43.241)["id"]
+    previa = api.post("/despachar/previa", headers=CHAVE).json()
+    assert previa["economia_reais"] is None and previa["economia_pct"] > 0
+    api.put("/ajustes", json={"custo_km": 0.8}, headers=CHAVE)
+    previa = api.post("/despachar/previa", headers=CHAVE).json()
+    assert previa["economia_reais"] == round(previa["economia_km"] * 0.8, 2) or previa["economia_reais"] > 0
+    api.post("/despachar", headers=CHAVE)
+    for p in (a, b):
+        api.post(f"/rotas/Carlos/entregar/{p}", headers={"X-Codigo": CODIGO})
+    g = api.get("/estatisticas?dias=1", headers=CHAVE).json()["geral"]
+    assert g["economia_pct"] > 0
+    assert g["economia_reais"] == round(g["km_economizados"] * 0.8, 2)
