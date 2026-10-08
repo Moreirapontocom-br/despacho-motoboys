@@ -190,6 +190,11 @@
  body.funcionario .so-gestor{display:none !important}
  body:not(.admin) .so-admin{display:none !important}
  #linkConvite{word-break:break-all;margin-top:8px}
+ #telaLogin{overflow-y:auto}
+ .caixaLogin{margin:auto}
+ .mapaEscolha{height:220px;border-radius:8px;margin:8px 0}
+ #escolhaRest{padding:4px;max-width:200px}
+ #listaRest td,#listaRest th{text-align:left}
  #listaEquipe li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--borda);flex-wrap:wrap}
  #listaEquipe li:first-child{border-top:0}
 </style>
@@ -210,6 +215,15 @@
    <input id="cvNome" placeholder="Seu nome" autocomplete="name">
    <input id="cvEmail" type="email" placeholder="Seu e-mail" autocomplete="username">
    <input id="cvSenha" type="password" placeholder="Crie uma senha (mínimo 8 caracteres)" autocomplete="new-password">
+   <div id="cvRestaurante" style="display:none">
+    <div class="ajuda" style="margin-top:14px"><strong>🏪 Seu restaurante</strong> (de onde os motoboys saem):</div>
+    <input id="cvRestNome" placeholder="Nome do restaurante" maxlength="80">
+    <input id="cvRestEnd" placeholder="Endereço (ex.: Rua São Paulo, 123 - Centro)" maxlength="200">
+    <input id="cvRestCidade" placeholder="Cidade, UF (ex.: Itabira, MG)" maxlength="80">
+    <button id="cvRestBuscar" class="claro" style="width:100%;margin-top:8px">📍 Achar no mapa</button>
+    <div id="cvRestMapa" class="mapaEscolha" style="display:none"></div>
+    <div class="ajuda" id="cvRestDica"></div>
+   </div>
    <button id="btConvite" class="verde grande">Criar minha conta</button>
   </div>
   <div id="semConta" style="display:none">
@@ -227,8 +241,9 @@
 </div>
 <div class="topo">
 <header>
- <h1>Painel do restaurante</h1>
+ <h1 id="tituloPainel">Painel do restaurante</h1>
  <span class="espaco"></span>
+ <select id="escolhaRest" class="so-admin" title="Restaurante que você está vendo"></select>
  <span id="relogio"></span>
  <span id="quemSou"></span>
  <button id="sair" class="claro mini" style="display:none">Sair</button>
@@ -397,6 +412,27 @@
 
 <div id="abaConta" class="aba" style="display:none">
  <div class="pagina">
+  <section class="so-admin">
+   <h2>🏪 Restaurantes <span class="contador" id="contRest"></span></h2>
+   <div class="ajuda">Todos os restaurantes do sistema e o movimento de hoje. "Abrir" mostra o painel daquele restaurante
+    (você também pode trocar no topo da página).</div>
+   <div class="tabela"><table class="motos" id="listaRest"></table></div>
+   <div class="linha" style="margin-top:8px"><button id="btConvDono" class="claro">Convidar dono de um restaurante novo</button></div>
+   <div class="ajuda">O dono abre o link, cria e-mail e senha e informa o endereço do restaurante.</div>
+   <div id="linkConviteDono"></div>
+   <div id="msgRestaurantes"></div>
+  </section>
+  <section class="so-gestor" id="secRestaurante">
+   <h2>🏪 Meu restaurante</h2>
+   <div class="ajuda">O endereço é de onde os motoboys saem e para onde voltam. Só o dono muda estes dados.</div>
+   <div class="linha"><input id="rsNome" placeholder="Nome do restaurante" maxlength="80"></div>
+   <div class="linha"><input id="rsEnd" placeholder="Endereço (ex.: Rua São Paulo, 123 - Centro)" maxlength="200">
+    <input id="rsCidade" placeholder="Cidade, UF" maxlength="80" style="flex:0 1 180px"></div>
+   <div class="linha"><button id="rsBuscar" class="claro">📍 Achar no mapa</button><button id="rsSalvar" class="verde">Salvar</button></div>
+   <div id="rsMapa" class="mapaEscolha"></div>
+   <div class="ajuda">Confira o pino: arraste ou clique no mapa até a porta do restaurante.</div>
+   <div id="msgRest"></div>
+  </section>
   <section>
    <h2>Minha senha</h2>
    <div class="ajuda" id="contaInfo"></div>
@@ -408,7 +444,7 @@
    </div>
    <div id="msgSenha"></div>
   </section>
-  <section class="so-gestor">
+  <section class="so-gestor" id="secEquipe">
    <h2>Equipe</h2>
    <div class="ajuda">Cada pessoa entra com o próprio e-mail e senha. <strong>Funcionário</strong> opera pedidos, despacho e turno dos motoboys.
     <strong>Dono</strong> também muda regras, cadastra motoboys e cuida da equipe.</div>
@@ -426,7 +462,6 @@
     O link vale <strong>uma vez só</strong> e vence em 7 dias.</div>
    <div class="linha">
     <button id="btConvFunc" class="claro">Convidar funcionário</button>
-    <button id="btConvDono" class="claro so-admin">Convidar dono do restaurante</button>
    </div>
    <div id="linkConvite"></div>
    <div id="msgEquipe"></div>
@@ -470,16 +505,20 @@ function ler(chave) { try { return localStorage.getItem(chave); } catch (e) { re
 // computador por até 30 dias (até tocar em "Sair"). O administrador do sistema
 // pode entrar com a chave (API_KEY), que só fica guardada enquanto a aba estiver aberta.
 // ---------------------------------------------------------------------
-let sessao = ler("sessao") || "", chaveAdmin = "";
-try { chaveAdmin = sessionStorage.getItem("chaveAdmin") || ""; } catch (e) {}
+let sessao = ler("sessao") || "", chaveAdmin = "", restAdmin = "";
+try { chaveAdmin = sessionStorage.getItem("chaveAdmin") || ""; restAdmin = sessionStorage.getItem("restAdmin") || ""; } catch (e) {}
 let chave = sessao || chaveAdmin;  // tem alguém conectado? (o resto do painel confere isso)
-let eu = null;
+let eu = null, restauranteAtual = null;
 $("cidade").value = CONFIG.cidade;
 
-function cabecalhosAuth() { return sessao ? {"Authorization": "Bearer " + sessao} : {"X-API-Key": chaveAdmin}; }
+// O administrador vê qualquer restaurante: o escolhido vai no cabeçalho X-Restaurante.
+function cabecalhosAuth() {
+  if (sessao) return {"Authorization": "Bearer " + sessao};
+  return restAdmin ? {"X-API-Key": chaveAdmin, "X-Restaurante": restAdmin} : {"X-API-Key": chaveAdmin};
+}
 function esquecerLogin() {
-  sessao = ""; chaveAdmin = ""; chave = ""; eu = null;
-  guardar("sessao", null); try { sessionStorage.removeItem("chaveAdmin"); } catch (e) {}
+  sessao = ""; chaveAdmin = ""; chave = ""; eu = null; restAdmin = "";
+  guardar("sessao", null); try { sessionStorage.removeItem("chaveAdmin"); sessionStorage.removeItem("restAdmin"); } catch (e) {}
 }
 
 async function api(caminho, metodo, corpo) {
@@ -512,13 +551,17 @@ async function mostrarLogin(msg) {
   let temUsuarios = true, papelConvite = null;
   try { temUsuarios = (await (await fetch("/auth/estado")).json()).tem_usuarios; } catch (e) {}
   if (convite) {
-    try { const c = await (await fetch("/auth/convite?convite=" + encodeURIComponent(convite))).json(); if (c.valido) papelConvite = c.papel; } catch (e) {}
+    try {
+      const c = await (await fetch("/auth/convite?convite=" + encodeURIComponent(convite))).json();
+      if (c.valido) { papelConvite = c.papel; conviteNovoRest = !!c.novo_restaurante; }
+    } catch (e) {}
     if (!papelConvite) { convite = ""; msg = msg || "Este link de convite não vale mais (já foi usado ou venceu). Peça um novo."; }
   }
   if (papelConvite) {
     $("cvTitulo").innerHTML = "";
     $("cvTitulo").append(el("strong", {textContent: "Você foi convidado como " + (papelConvite === "dono" ? "dono do restaurante" : "funcionário") + "."}),
-                         document.createTextNode(" Crie a sua conta:"));
+                         document.createTextNode(conviteNovoRest ? " Crie a sua conta e informe onde fica o restaurante:" : " Crie a sua conta:"));
+    $("cvRestaurante").style.display = conviteNovoRest ? "block" : "none";
     $("formConvite").style.display = "block"; $("cvNome").focus();
   } else if (!temUsuarios) {
     $("semConta").style.display = "block";
@@ -547,9 +590,50 @@ async function entrarCom(caminho, corpo, botao) {
 }
 $("btEntrar").onclick = () => entrarCom("/auth/entrar", {email: $("lgEmail").value, senha: $("lgSenha").value}, $("btEntrar"));
 $("btConvite").onclick = async () => {
-  await entrarCom("/auth/aceitar-convite", {convite: convite, nome: $("cvNome").value, email: $("cvEmail").value,
-                                            senha: $("cvSenha").value}, $("btConvite"));
+  const corpo = {convite: convite, nome: $("cvNome").value, email: $("cvEmail").value, senha: $("cvSenha").value};
+  if (conviteNovoRest) {
+    const nome = $("cvRestNome").value.trim(), end = $("cvRestEnd").value.trim(), cidade = $("cvRestCidade").value.trim();
+    if (!nome || !end || !cidade) { dizer($("msgLogin"), "Preencha o nome, o endereço e a cidade do restaurante.", "erro"); return; }
+    if (!pontoConvite) { dizer($("msgLogin"), "Toque em \"Achar no mapa\" e confira o pino do restaurante.", "erro"); return; }
+    corpo.restaurante = {nome: nome, endereco: end, cidade: cidade, lat: pontoConvite.lat, lng: pontoConvite.lng};
+  }
+  await entrarCom("/auth/aceitar-convite", corpo, $("btConvite"));
   if (eu) convite = "";
+};
+
+// ---------------------------------------------------------------------
+// Endereço do restaurante no mapa: acha pelo texto e a pessoa confere o pino
+// (arrastando ou clicando no mapa). Usado no convite do dono e na aba Conta.
+// ---------------------------------------------------------------------
+function mapaEscolha(div, ponto, aoMudar) {
+  const m = L.map(div).setView([ponto.lat, ponto.lng], 16);
+  L.tileLayer(CONFIG.mapaUrl, {maxZoom: 19, subdomains: "abc", attribution: CONFIG.mapaCredito}).addTo(m);
+  const pinoR = L.marker([ponto.lat, ponto.lng], {draggable: true,
+                         icon: L.divIcon({className: "", html: pinHtml("R", "rest"), iconSize: [26, 26]})}).addTo(m);
+  const mudar = (ll) => { pinoR.setLatLng(ll); aoMudar({lat: ll.lat, lng: ll.lng}); };
+  pinoR.on("dragend", () => mudar(pinoR.getLatLng()));
+  m.on("click", (e) => mudar(e.latlng));
+  return {mapa: m, mover: (p) => { m.setView([p.lat, p.lng], 17); mudar(L.latLng(p.lat, p.lng)); }};
+}
+async function acharRestaurante(caminho, corpo, comApi) {
+  const r = comApi ? await api(caminho, "POST", corpo) : await postLogin(caminho, corpo);
+  if (!r.resultados.length) throw new Error(r.aviso || "Não achei esse endereço. Confira e tente de novo, ou clique no mapa no ponto certo.");
+  return r.resultados[0];
+}
+let conviteNovoRest = false, pontoConvite = null, mapaConvite = null;
+$("cvRestBuscar").onclick = async () => {
+  const texto = [$("cvRestEnd").value.trim(), $("cvRestCidade").value.trim()].filter(Boolean).join(", ");
+  if (texto.length < 3) { dizer($("msgLogin"), "Digite o endereço e a cidade do restaurante.", "erro"); return; }
+  $("cvRestBuscar").disabled = true; dizer($("msgLogin"), "Procurando...");
+  try {
+    const achado = await acharRestaurante("/auth/convite/endereco", {convite: convite, endereco: texto});
+    $("cvRestMapa").style.display = "block";
+    if (!mapaConvite) mapaConvite = mapaEscolha("cvRestMapa", achado, (p) => { pontoConvite = p; });
+    mapaConvite.mapa.invalidateSize(); mapaConvite.mover(achado);
+    $("cvRestDica").textContent = "Achei: " + achado.rotulo + ". Confira o pino R: arraste ou clique no mapa até a porta do restaurante.";
+    dizer($("msgLogin"), "");
+  } catch (err) { dizer($("msgLogin"), err.message, "erro"); }
+  $("cvRestBuscar").disabled = false;
 };
 $("btAdmin").onclick = async () => {
   chaveAdmin = $("adChave").value.trim(); sessao = "";
@@ -578,11 +662,101 @@ async function aposEntrar() {
   $("quemSou").textContent = "👤 " + eu.nome + (eu.papel === "dono" ? " (dono)" : eu.papel === "admin" ? "" : " (funcionário)");
   $("sair").style.display = "inline-block";
   $("contaInfo").textContent = eu.tipo === "admin" ? "Você entrou como administrador do sistema (com a chave). O administrador não tem senha."
-                                                   : "Conectado como " + eu.email + ".";
+                                                   : "Conectado como " + eu.email + (eu.restaurante ? " · " + eu.restaurante.nome : "") + ".";
   $("minhaSenha").style.display = eu.tipo === "admin" ? "none" : "block";
+  aplicarRestaurante(eu.restaurante);
+  if (eu.papel === "admin") await carregarRestaurantes();
+  if (!restauranteAtual) {
+    // Administrador sem restaurante escolhido: abre a lista de restaurantes.
+    document.querySelector('#abas button[data-aba="abaConta"]').click();
+    dizer($("msgRestaurantes"), "Escolha um restaurante para ver o painel dele" +
+          ($("escolhaRest").options.length > 1 ? "." : ", ou convide o dono do primeiro."), "erro");
+    return;
+  }
   atualizarTudo(); carregarBairros();
   if (eu.papel !== "funcionario") carregarEquipe();
 }
+
+// Restaurante em que a pessoa está mexendo: centro do mapa, cidade dos pedidos e nome.
+function aplicarRestaurante(r) {
+  restauranteAtual = r;
+  $("secRestaurante").style.display = $("secEquipe").style.display = r ? "" : "none";
+  if (!r) { $("tituloPainel").textContent = "Painel do restaurante"; return; }
+  CONFIG.restaurante = {lat: r.lat, lng: r.lng};
+  CONFIG.cidade = r.cidade;
+  $("cidade").value = r.cidade;
+  restauranteNome = r.nome;
+  $("tituloPainel").textContent = "🏪 " + r.nome;
+  document.title = r.nome + " · Despacho";
+  $("rsNome").value = r.nome; $("rsEnd").value = r.endereco; $("rsCidade").value = r.cidade;
+  pontoRest = {lat: r.lat, lng: r.lng};
+  if (mapaOp) { mapaOp.setView([r.lat, r.lng], 14); ultimoMapa = ""; }
+  if (mapaRest) mapaRest.mover(pontoRest);
+}
+
+// ---------------------------------------------------------------------
+// Administrador: todos os restaurantes, escolha de qual ver e convite de dono
+// ---------------------------------------------------------------------
+async function carregarRestaurantes() {
+  try {
+    const r = await api("/restaurantes");
+    $("contRest").textContent = r.restaurantes.length + " de " + r.limite;
+    const sel = $("escolhaRest"); sel.innerHTML = "";
+    sel.append(el("option", {value: "", textContent: "— Escolha o restaurante —"}));
+    r.restaurantes.forEach((x) => sel.append(el("option", {value: String(x.id), textContent: x.nome})));
+    sel.value = restauranteAtual ? String(restauranteAtual.id) : "";
+    const t = $("listaRest"); t.innerHTML = "";
+    t.append(el("tr", {}, ...["Restaurante", "Na fila", "Em rota", "Entregues hoje", "Motoboys de turno", "Dono", ""].map((h) => el("th", {textContent: h}))));
+    if (!r.restaurantes.length) t.append(el("tr", {}, el("td", {colSpan: 7, className: "vazio", textContent: "Nenhum restaurante ainda."})));
+    r.restaurantes.forEach((x) => {
+      const abrir = el("button", {className: "mini", textContent: restauranteAtual && restauranteAtual.id === x.id ? "Aberto" : "Abrir"});
+      abrir.disabled = !!(restauranteAtual && restauranteAtual.id === x.id);
+      abrir.onclick = () => escolherRestaurante(String(x.id));
+      t.append(el("tr", {},
+        el("td", {}, el("strong", {textContent: x.nome}), el("div", {className: "detalheMoto", textContent: x.endereco + " · " + x.cidade})),
+        el("td", {textContent: x.na_fila}), el("td", {textContent: x.em_rota}), el("td", {textContent: x.entregues_hoje}),
+        el("td", {textContent: x.motoboys_de_turno}), el("td", {textContent: x.donos.join(", ") || "—"}), el("td", {}, abrir)));
+    });
+    $("btConvDono").disabled = r.restaurantes.length >= r.limite;
+    $("btConvDono").title = r.restaurantes.length >= r.limite ? "Limite de restaurantes atingido (MAX_RESTAURANTES no Render)" : "";
+  } catch (err) { dizer($("msgRestaurantes"), err.message, "erro"); }
+}
+function escolherRestaurante(id) {
+  restAdmin = id;
+  try { id ? sessionStorage.setItem("restAdmin", id) : sessionStorage.removeItem("restAdmin"); } catch (e) {}
+  location.reload();  // recomeça o painel limpo, já no restaurante escolhido
+}
+$("escolhaRest").onchange = () => escolherRestaurante($("escolhaRest").value);
+
+// ---------------------------------------------------------------------
+// Meu restaurante: nome e endereço (só dono e administrador)
+// ---------------------------------------------------------------------
+let pontoRest = null, mapaRest = null;
+function abrirMapaRest() {
+  if (!pontoRest) return;
+  if (!mapaRest) mapaRest = mapaEscolha("rsMapa", pontoRest, (p) => { pontoRest = p; });
+  setTimeout(() => mapaRest.mapa.invalidateSize(), 50);
+}
+$("rsBuscar").onclick = async () => {
+  const texto = [$("rsEnd").value.trim(), $("rsCidade").value.trim()].filter(Boolean).join(", ");
+  if (texto.length < 3) { dizer($("msgRest"), "Digite o endereço e a cidade.", "erro"); return; }
+  $("rsBuscar").disabled = true; dizer($("msgRest"), "Procurando...");
+  try {
+    const achado = await acharRestaurante("/restaurante/localizar", {endereco: texto}, true);
+    abrirMapaRest(); mapaRest.mover(achado);
+    dizer($("msgRest"), "Achei: " + achado.rotulo + ". Confira o pino e toque em Salvar.", "ok");
+  } catch (err) { dizer($("msgRest"), err.message, "erro"); }
+  $("rsBuscar").disabled = false;
+};
+$("rsSalvar").onclick = async () => {
+  try {
+    const r = await api("/restaurante", "PUT", {nome: $("rsNome").value.trim(), endereco: $("rsEnd").value.trim(),
+                                                cidade: $("rsCidade").value.trim(), lat: pontoRest.lat, lng: pontoRest.lng});
+    aplicarRestaurante(r.restaurante);
+    dizer($("msgRest"), r.mensagem + " O despacho já usa o endereço novo.", "ok");
+    if (eu.papel === "admin") carregarRestaurantes();
+  } catch (err) { dizer($("msgRest"), err.message.startsWith("[") || err.message.includes("422") ? "Confira os campos." : err.message, "erro"); }
+};
 $("sair").onclick = async () => {
   if (sessao) { try { await fetch("/auth/sair", {method: "POST", headers: cabecalhosAuth()}); } catch (e) {} }
   esquecerLogin(); location.reload();
@@ -628,17 +802,19 @@ async function gerarConvite(papel) {
   try {
     const r = await api("/convites", "POST", {papel: papel});
     const link = location.origin + "/painel#convite=" + encodeURIComponent(r.convite);
-    const caixa = $("linkConvite"); caixa.innerHTML = "";
+    const caixa = $(papel === "dono" ? "linkConviteDono" : "linkConvite"); caixa.innerHTML = "";
     const copiar = el("button", {className: "mini", textContent: "Copiar link"});
     copiar.onclick = async () => { try { await navigator.clipboard.writeText(link); copiar.textContent = "Copiado!"; } catch (e) { copiar.textContent = "Copie à mão"; } };
-    const texto = "Olá! Este é o seu convite para o painel de entregas" + (restauranteNome ? " do " + restauranteNome : "") +
-                  ". Abra o link e crie a sua conta (vale uma vez só, por " + r.dias + " dias): " + link;
+    const texto = papel === "dono"
+      ? "Olá! Este é o seu convite para o painel de entregas. Abra o link, crie a sua conta e informe o endereço do seu restaurante (vale uma vez só, por " + r.dias + " dias): " + link
+      : "Olá! Este é o seu convite para o painel de entregas" + (restauranteNome ? " do " + restauranteNome : "") +
+        ". Abra o link e crie a sua conta (vale uma vez só, por " + r.dias + " dias): " + link;
     caixa.append(el("div", {className: "ok", textContent: "Convite de " + (papel === "dono" ? "dono" : "funcionário") + " criado: " + link + " "}),
                  el("div", {className: "acoes"}, copiar,
                     el("a", {className: "zap", target: "_blank", rel: "noopener", textContent: "Enviar no WhatsApp",
                              href: "https://wa.me/?text=" + encodeURIComponent(texto)})),
                  el("div", {className: "ajuda", textContent: "O link só aparece agora. Se perder, é só gerar outro."}));
-  } catch (err) { dizer($("msgEquipe"), err.message, "erro"); }
+  } catch (err) { dizer($(papel === "dono" ? "msgRestaurantes" : "msgEquipe"), err.message, "erro"); }
 }
 $("btConvFunc").onclick = () => gerarConvite("funcionario");
 $("btConvDono").onclick = () => gerarConvite("dono");
@@ -1482,13 +1658,16 @@ document.querySelectorAll("#abas button").forEach((b) => {
     document.querySelectorAll(".aba").forEach((a) => a.style.display = a.id === b.dataset.aba ? "block" : "none");
     if (b.dataset.aba === "abaOperacao" && mapaOp) setTimeout(() => mapaOp.invalidateSize(), 50);
     if (b.dataset.aba === "abaRelatorios") carregarEstat(true);
+    if (b.dataset.aba === "abaConta") { if (eu && eu.papel !== "funcionario") abrirMapaRest(); if (eu && eu.papel === "admin") carregarRestaurantes(); }
     window.scrollTo(0, 0);
   };
 });
 
 // carregarMotos primeiro: as cores e o seletor de "Atribuir" dependem da lista de motoboys.
 // automatico = true só na atualização periódica; depois de um clique, sempre redesenha.
-async function atualizarTudo(automatico) { await carregarMotos(automatico); await carregarFila(automatico); await carregarResumo(); carregarEstat(!automatico); }
+async function atualizarTudo(automatico) {
+  if (!restauranteAtual) return;  // administrador ainda não escolheu o restaurante
+  await carregarMotos(automatico); await carregarFila(automatico); await carregarResumo(); carregarEstat(!automatico); }
 iniciarMapa();
 if (convite) mostrarLogin(); else if (chave) aposEntrar(); else mostrarLogin();
 setInterval(() => atualizarTudo(true), 10000);

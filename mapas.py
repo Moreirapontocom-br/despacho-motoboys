@@ -15,8 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from config import (INTERVALO_CONSULTA_S, LOCATIONIQ_KEY, LOCATIONIQ_URL, MAX_PONTOS_MATRIZ, OSRM_URL,
-                    RESTAURANTE, USER_AGENT, log)
+from config import INTERVALO_CONSULTA_S, LOCATIONIQ_KEY, LOCATIONIQ_URL, MAX_PONTOS_MATRIZ, OSRM_URL, USER_AGENT, log
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -113,9 +112,10 @@ _trava_geo = threading.Lock()
 _ultimo_geo = 0.0
 
 
-def buscar_endereco(consulta=None, campos=None):
+def buscar_endereco(consulta=None, campos=None, centro=None):
     """Endereço -> lista de lat/lng candidatos (LocationIQ se houver chave; senão Nominatim/OpenStreetMap).
     consulta: texto livre. campos: dict com street/city/state/postalcode (busca estruturada).
+    centro: {"lat", "lng"} do restaurante; com ele, só procura na região em volta.
     O Nominatim público pede no máximo 1 consulta por segundo e um User-Agent que
     identifique o aplicativo; ambos são respeitados aqui."""
     global _ultimo_geo
@@ -124,9 +124,10 @@ def buscar_endereco(consulta=None, campos=None):
         if espera > 0:
             time.sleep(espera)
         _ultimo_geo = time.time()
-    d = 0.2  # ~22 km em volta do restaurante: só procura nesta região
-    base = {"format": "json", "limit": 5, "countrycodes": "br", "accept-language": "pt-BR", "bounded": 1,
-            "viewbox": f"{RESTAURANTE['lng'] - d},{RESTAURANTE['lat'] + d},{RESTAURANTE['lng'] + d},{RESTAURANTE['lat'] - d}"}
+    base = {"format": "json", "limit": 5, "countrycodes": "br", "accept-language": "pt-BR"}
+    if centro:
+        d = 0.2  # ~22 km em volta do restaurante: só procura nesta região
+        base.update(bounded=1, viewbox=f"{centro['lng'] - d},{centro['lat'] + d},{centro['lng'] + d},{centro['lat'] - d}")
     if campos:
         base.update({k: v for k, v in campos.items() if v})
     else:

@@ -21,9 +21,16 @@ def _numero(nome, padrao):
 
 
 # ---------------------------------------------------------------------
-# Restaurante
+# Restaurantes
+#
+# Cada restaurante tem o próprio endereço, guardado no banco (o dono informa ao
+# criar a conta e pode mudar na aba 👤 Conta). As variáveis abaixo só valem para
+# instalações antigas, de um restaurante só: na atualização, os dados que já
+# existiam passam a ser desse restaurante. Também centralizam o mapa antes do login.
 # ---------------------------------------------------------------------
-RESTAURANTE = {"lat": _numero("RESTAURANTE_LAT", -19.6156), "lng": _numero("RESTAURANTE_LNG", -43.2258),
+# Quantos restaurantes o sistema aceita. Para aumentar, mude no Render.
+MAX_RESTAURANTES = int(_numero("MAX_RESTAURANTES", 6))
+RESTAURANTE ={"lat": _numero("RESTAURANTE_LAT", -19.6156), "lng": _numero("RESTAURANTE_LNG", -43.2258),
                "endereco": os.environ.get("RESTAURANTE_ENDERECO", "").strip()}
 # Aparece na mensagem de WhatsApp enviada ao cliente.
 RESTAURANTE_NOME = os.environ.get("RESTAURANTE_NOME", "").strip()

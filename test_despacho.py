@@ -45,7 +45,8 @@ R = config.RESTAURANTE
 # ---------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def banco_limpo():
-    """Cada teste começa com o banco vazio e sem bloqueios de tentativas."""
+    """Cada teste começa com o banco vazio (só com o restaurante 1, no endereço
+    das variáveis de ambiente) e sem bloqueios de tentativas."""
     with banco.engine.begin() as con:
         con.execute(text("DELETE FROM pedidos"))
         con.execute(text("DELETE FROM motoboys"))
@@ -53,6 +54,9 @@ def banco_limpo():
         con.execute(text("DELETE FROM sessoes"))
         con.execute(text("DELETE FROM usuarios"))
         con.execute(text("DELETE FROM convites"))
+        con.execute(text("DELETE FROM restaurantes"))
+        banco.restaurante_padrao(con)
+    api_painel._ultimo_automatico.clear()
     seguranca._erros.clear()
     seguranca._bloqueado_ate.clear()
     yield
@@ -326,11 +330,11 @@ def test_pedido_entregue_durante_o_despacho_nao_volta_para_a_rota(api, monkeypat
     original = despacho.montar_rota
     ja_entregou = []
 
-    def montar_com_entrega_no_meio(viagens):
+    def montar_com_entrega_no_meio(base, viagens):
         if not ja_entregou:  # Ana marca a entrega enquanto o despacho está calculando
             ja_entregou.append(True)
             assert api.post(f"/rotas/Ana/entregar/{primeiro}", headers={"X-Codigo": CODIGO}).status_code == 200
-        return original(viagens)
+        return original(base, viagens)
 
     monkeypatch.setattr(despacho, "montar_rota", montar_com_entrega_no_meio)
     api.post("/despachar", headers=CHAVE)
@@ -397,9 +401,11 @@ def test_banco_antigo_e_atualizado_sem_perder_dados(monkeypatch):
         CREATE TABLE pedidos (id TEXT PRIMARY KEY, endereco TEXT NOT NULL, lat DOUBLE PRECISION NOT NULL,
                               lng DOUBLE PRECISION NOT NULL, status TEXT NOT NULL DEFAULT 'pendente',
                               motoboy_id TEXT, ordem INTEGER, criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE ajustes (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);
         INSERT INTO motoboys VALUES ('Veterano', 'codigo-antigo', -19.6156, -43.2258);
         INSERT INTO pedidos (id, endereco, lat, lng, status, motoboy_id, ordem)
             VALUES ('VELHO1', 'Rua Velha, 1', -19.62, -43.23, 'despachado', 'Veterano', 1);
+        INSERT INTO ajustes VALUES ('max_paradas', '3');
     """)
     con.commit()
     con.close()
@@ -417,6 +423,9 @@ def test_banco_antigo_e_atualizado_sem_perder_dados(monkeypatch):
         assert [p["id"] for p in r.json()["paradas"]] == ["VELHO1"]   # pedido antigo continua lá
         assert r.json()["paradas"][0]["rotulo"] == "VELHO1"           # sem número do dia: mostra o id
         assert api.get("/motoboys", headers=CHAVE).json()["motoboys"][0]["ativo"]  # coluna nova com o padrão
+        # Tudo passou a ser do restaurante 1, criado com o endereço das variáveis de ambiente.
+        assert api.get("/restaurante", headers=CHAVE).json()["nome"] == "Restaurante Teste"
+        assert api.get("/ajustes", headers=CHAVE).json()["ajustes"]["max_paradas"] == 3   # regra antiga mantida
     finally:
         antigo.dispose()
 
@@ -899,12 +908,14 @@ def test_senha_curta_e_email_invalido(api):
 # ---------------------------------------------------------------------
 def test_administrador_convida_o_dono_e_o_link_vale_uma_vez(api):
     c = api.post("/convites", json={"papel": "dono"}, headers=CHAVE).json()["convite"]
-    assert api.get("/auth/convite", params={"convite": c}).json() == {"valido": True, "papel": "dono"}
-    r = api.post("/auth/aceitar-convite", json={"convite": c, "nome": "Rafa", "email": "rafa@r.com", "senha": SENHA})
+    assert api.get("/auth/convite", params={"convite": c}).json() == {"valido": True, "papel": "dono", "novo_restaurante": True}
+    r = api.post("/auth/aceitar-convite", json={"convite": c, "nome": "Rafa", "email": "rafa@r.com", "senha": SENHA,
+                                                "restaurante": DADOS_BH})
     assert r.status_code == 200 and r.json()["papel"] == "dono"
     assert api.get("/pedidos", headers={"Authorization": "Bearer " + r.json()["token"]}).status_code == 200
     assert api.get("/auth/convite", params={"convite": c}).json()["valido"] is False
-    r = api.post("/auth/aceitar-convite", json={"convite": c, "nome": "Outro", "email": "o@r.com", "senha": SENHA})
+    r = api.post("/auth/aceitar-convite", json={"convite": c, "nome": "Outro", "email": "o@r.com", "senha": SENHA,
+                                                "restaurante": DADOS_BH})
     assert r.status_code == 410
     assert "convite" not in sql("SELECT token FROM convites").scalar()  # só o hash
 
@@ -925,3 +936,140 @@ def test_convite_vencido_ou_inventado_nao_vale(api):
     r = api.post("/auth/aceitar-convite", json={"convite": "inventado-123456", "nome": "X", "email": "x@r.com", "senha": SENHA})
     assert r.status_code == 410
     assert api.post("/convites", json={"papel": "funcionario"}).status_code == 401
+
+
+# ---------------------------------------------------------------------
+# Vários restaurantes no mesmo sistema
+# ---------------------------------------------------------------------
+BH = {"lat": -19.92, "lng": -43.94}  # Belo Horizonte, ~70 km do restaurante 1 (Itabira)
+DADOS_BH = {"nome": "Cantina BH", "endereco": "Av. Afonso Pena, 1000 - Centro", "cidade": "Belo Horizonte, MG", **BH}
+
+
+def novo_restaurante(api, email, dados=DADOS_BH):
+    """O administrador convida o dono, que cria a conta e informa o endereço do restaurante."""
+    c = api.post("/convites", json={"papel": "dono"}, headers=CHAVE).json()["convite"]
+    r = api.post("/auth/aceitar-convite", json={"convite": c, "nome": "Dono", "email": email, "senha": SENHA,
+                                                "restaurante": dados})
+    assert r.status_code == 200, r.text
+    return {"Authorization": "Bearer " + r.json()["token"]}
+
+
+def moto(api, nome, headers, ponto=None):
+    return api.post("/motoboys", json={"id": nome, "codigo": CODIGO, **(ponto or {"lat": R["lat"], "lng": R["lng"]})},
+                    headers=headers)
+
+
+def test_convite_de_dono_pede_o_endereco_do_restaurante(api):
+    c = api.post("/convites", json={"papel": "dono"}, headers=CHAVE).json()["convite"]
+    sem = api.post("/auth/aceitar-convite", json={"convite": c, "nome": "X", "email": "x@x.com", "senha": SENHA})
+    assert sem.status_code == 422
+    assert api.get("/auth/convite", params={"convite": c}).json()["valido"] is True  # o convite não foi gasto
+    dono = novo_restaurante(api, "bh@r.com")
+    eu = api.get("/auth/eu", headers=dono).json()
+    assert eu["papel"] == "dono" and eu["restaurante_id"] != 1
+    assert (eu["restaurante"]["nome"], eu["restaurante"]["lat"]) == ("Cantina BH", BH["lat"])
+
+
+def test_cada_restaurante_so_ve_os_proprios_dados(api):
+    dono_a = criar_dono(api)
+    dono_b = novo_restaurante(api, "b@r.com")
+    assert moto(api, "Carlos", dono_a).status_code == 200
+    pid = api.post("/pedidos", json={"endereco": "Rua A, 1", "lat": -19.62, "lng": -43.23}, headers=dono_a).json()["id"]
+    assert api.get("/pedidos", headers=dono_b).json()["pedidos"] == []
+    assert api.get("/motoboys", headers=dono_b).json()["motoboys"] == []
+    assert api.get("/resumo", headers=dono_b).json()["pendentes"] == 0
+    assert api.post(f"/pedidos/{pid}/cancelar", headers=dono_b).status_code == 409
+    assert api.post(f"/pedidos/{pid}/atribuir", json={"motoboy_id": "Carlos"}, headers=dono_b).status_code == 404
+    assert api.post("/motoboys/Carlos/turno", json={"ativo": False}, headers=dono_b).status_code == 404
+    assert api.delete("/motoboys/Carlos", headers=dono_b).status_code == 404
+    assert "Não há pedidos" in api.post("/despachar", headers=dono_b).json()["mensagem"]
+    # Número do dia contado por restaurante; B não usa os motoboys de A.
+    assert api.post("/pedidos", json={"endereco": "Rua B, 2", **BH}, headers=dono_b).json()["rotulo"] == "#1"
+    assert "Nenhum motoboy" in api.post("/despachar", headers=dono_b).json()["mensagem"]
+    assert list(api.post("/despachar", headers=dono_a).json()["rotas"]) == ["Carlos"]
+
+
+def test_regras_sao_de_cada_restaurante(api):
+    dono_a = criar_dono(api)
+    dono_b = novo_restaurante(api, "b@r.com")
+    api.put("/ajustes", json={"modo": "automatico", "max_paradas": 2}, headers=dono_b)
+    assert api.get("/ajustes", headers=dono_a).json()["ajustes"]["modo"] == "assistido"
+    assert api.get("/ajustes", headers=dono_b).json()["ajustes"]["max_paradas"] == 2
+
+
+def test_automatico_so_despacha_no_restaurante_que_ligou(api):
+    dono_a = criar_dono(api)
+    dono_b = novo_restaurante(api, "b@r.com")
+    api.put("/ajustes", json={"modo": "automatico", "espera_agrupamento_min": 0}, headers=dono_b)
+    moto(api, "Carlos", dono_a)
+    moto(api, "Bia", dono_b, BH)
+    api.post("/pedidos", json={"endereco": "Rua A, 1", "lat": -19.62, "lng": -43.23}, headers=dono_a)
+    pid_b = api.post("/pedidos", json={"endereco": "Rua B, 2", "lat": BH["lat"] - 0.01, "lng": BH["lng"]}, headers=dono_b).json()["id"]
+    api_painel.despacho_automatico_uma_vez()
+    assert rota("Bia") == [pid_b] and rota("Carlos") == []
+
+
+def test_motoboy_de_mesmo_nome_em_outro_restaurante_nao_e_trocado(api):
+    dono_a = criar_dono(api)
+    dono_b = novo_restaurante(api, "b@r.com")
+    moto(api, "Carlos", dono_a)
+    r = api.post("/motoboys", json={"id": "Carlos", "codigo": "outro-codigo", **BH}, headers=dono_b)
+    assert r.status_code == 409
+    assert ver_rota(api, "Carlos").status_code == 200  # o código dele continua valendo
+
+
+def test_rota_do_motoboy_sai_do_restaurante_dele(api):
+    dono_b = novo_restaurante(api, "b@r.com")
+    moto(api, "Bia", dono_b, BH)
+    api.post("/pedidos", json={"endereco": "Rua B, 2", "lat": BH["lat"] - 0.01, "lng": BH["lng"]}, headers=dono_b)
+    api.post("/despachar", headers=dono_b)
+    d = ver_rota(api, "Bia").json()
+    assert d["restaurante"]["lat"] == BH["lat"]
+    assert d["paradas"][0]["minutos"] < 10  # ~1 km do restaurante dela, não 70 km do outro
+
+
+def test_so_o_dono_muda_o_endereco_do_restaurante(api):
+    dono = criar_dono(api)
+    api.post("/usuarios", json={"nome": "Bia", "email": "bia@rest.com", "senha": SENHA}, headers=dono)
+    func = {"Authorization": "Bearer " + entrar(api, "bia@rest.com").json()["token"]}
+    novo = {"nome": "Novo Nome", "endereco": "Rua Nova, 10 - Centro", "cidade": "Itabira, MG", "lat": -19.60, "lng": -43.21}
+    assert api.put("/restaurante", json=novo, headers=func).status_code == 403
+    assert api.put("/restaurante", json=novo, headers=dono).status_code == 200
+    assert api.get("/restaurante", headers=func).json()["lat"] == -19.60
+    assert api.get("/pedidos", headers=func).json()["restaurante_nome"] == "Novo Nome"
+
+
+def test_dono_nao_mexe_na_equipe_de_outro_restaurante(api):
+    criar_dono(api)
+    dono_b = novo_restaurante(api, "b@r.com")
+    assert [u["email"] for u in api.get("/usuarios", headers=dono_b).json()["usuarios"]] == ["b@r.com"]
+    assert api.post("/usuarios/dono@rest.com/senha", json={"senha": "invadida-123"}, headers=dono_b).status_code == 404
+    assert api.delete("/usuarios/dono@rest.com", headers=dono_b).status_code == 404
+    c = api.post("/convites", json={"papel": "funcionario"}, headers=dono_b).json()["convite"]
+    r = api.post("/auth/aceitar-convite", json={"convite": c, "nome": "Zé", "email": "ze@r.com", "senha": SENHA})
+    func = {"Authorization": "Bearer " + r.json()["token"]}
+    assert api.get("/auth/eu", headers=func).json()["restaurante"]["nome"] == "Cantina BH"
+
+
+def test_administrador_escolhe_o_restaurante_e_ve_todos(api):
+    criar_dono(api)
+    dono_b = novo_restaurante(api, "b@r.com")
+    api.post("/pedidos", json={"endereco": "Rua B, 2", **BH}, headers=dono_b)
+    assert api.get("/pedidos", headers=CHAVE).status_code == 400  # dois restaurantes: precisa escolher
+    rid_b = api.get("/auth/eu", headers=dono_b).json()["restaurante_id"]
+    assert len(api.get("/pedidos", headers={**CHAVE, "X-Restaurante": str(rid_b)}).json()["pedidos"]) == 1
+    assert api.get("/pedidos", headers={**CHAVE, "X-Restaurante": "1"}).json()["pedidos"] == []
+    lista = api.get("/restaurantes", headers=CHAVE).json()
+    assert [r["nome"] for r in lista["restaurantes"]] == ["Restaurante Teste", "Cantina BH"]
+    assert lista["restaurantes"][1]["na_fila"] == 1 and lista["restaurantes"][1]["donos"] == ["b@r.com"]
+    assert api.get("/restaurantes", headers=dono_b).status_code == 403
+
+
+def test_limite_de_restaurantes(api, monkeypatch):
+    monkeypatch.setattr(config, "MAX_RESTAURANTES", 2)
+    c = api.post("/convites", json={"papel": "dono"}, headers=CHAVE).json()["convite"]  # 1 de 2 (o restaurante 1)
+    novo_restaurante(api, "b@r.com")                                                   # 2 de 2
+    assert api.post("/convites", json={"papel": "dono"}, headers=CHAVE).status_code == 409
+    r = api.post("/auth/aceitar-convite", json={"convite": c, "nome": "C", "email": "c@r.com", "senha": SENHA,
+                                                "restaurante": DADOS_BH})
+    assert r.status_code == 409

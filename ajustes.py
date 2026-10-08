@@ -42,10 +42,13 @@ LIMITES = {"max_paradas": (1, 10), "raio_max_km": (0, 50), "espera_agrupamento_m
            "raio_agrupamento_km": (0.3, 10), "custo_km": (0, 20)}
 
 
-def ler(con):
-    """Ajustes atuais (o que não foi salvo usa o padrão)."""
+def ler(con, rid):
+    """Ajustes atuais do restaurante (o que não foi salvo usa o padrão).
+    No banco, a chave é "id_do_restaurante:nome" (ex.: "2:modo")."""
     valores = dict(PADROES)
-    for chave, valor in con.execute(text("SELECT chave, valor FROM ajustes")):
+    prefixo = f"{rid}:"
+    for chave, valor in con.execute(text("SELECT chave, valor FROM ajustes WHERE chave LIKE :p"), {"p": prefixo + "%"}):
+        chave = chave[len(prefixo):]
         if chave in valores:
             try:
                 valores[chave] = json.loads(valor)
@@ -54,11 +57,11 @@ def ler(con):
     return valores
 
 
-def salvar(con, novos):
+def salvar(con, rid, novos):
     """Grava só as chaves conhecidas, já conferidas. Devolve os ajustes completos."""
     for chave, valor in novos.items():
         if chave not in PADROES or valor is None:
             continue
-        con.execute(text("DELETE FROM ajustes WHERE chave = :c"), {"c": chave})
-        con.execute(text("INSERT INTO ajustes (chave, valor) VALUES (:c, :v)"), {"c": chave, "v": json.dumps(valor)})
-    return ler(con)
+        con.execute(text("DELETE FROM ajustes WHERE chave = :c"), {"c": f"{rid}:{chave}"})
+        con.execute(text("INSERT INTO ajustes (chave, valor) VALUES (:c, :v)"), {"c": f"{rid}:{chave}", "v": json.dumps(valor)})
+    return ler(con, rid)

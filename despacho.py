@@ -2,6 +2,8 @@
 Algoritmo de despacho: agrupa os pedidos, escolhe o motoboy e ordena as paradas.
 
 As funções daqui não conhecem a web (FastAPI); quem chama é o api_painel.py.
+"base" é o ponto do restaurante ({"lat", "lng"}): de onde os motoboys saem e
+para onde voltam. Cada restaurante tem o seu.
 """
 
 import itertools
@@ -12,25 +14,29 @@ from contextlib import contextmanager
 from fastapi import HTTPException
 from sqlalchemy import text
 
-from config import FATOR_RUAS, MAX_PARADAS_VIAGEM, PARADA_MIN, RESTAURANTE, SAIDA_MIN
+from config import FATOR_RUAS, MAX_PARADAS_VIAGEM, PARADA_MIN, SAIDA_MIN
 from horarios import agora_utc, gps_recente, parse_ts
 from mapas import custo_reta, haversine, matriz_duracoes
 
 # Impede que despacho, atribuição, edição, cancelamento e remoção de motoboy mexam
-# nos mesmos pedidos ao mesmo tempo. Funciona porque o servidor roda numa única
-# cópia (um "worker"); com várias cópias, precisaria virar uma trava no banco.
-_trava = threading.Lock()
+# nos mesmos pedidos ao mesmo tempo. Uma trava por restaurante: o despacho de um
+# não faz o outro esperar. Funciona porque o servidor roda numa única cópia (um
+# "worker"); com várias cópias, precisaria virar uma trava no banco.
+_travas = {}
+_trava_travas = threading.Lock()
 
 
 @contextmanager
-def trava_despacho(espera_s=15):
-    """Use com `with trava_despacho():`. Espera até 15 s; depois disso, avisa o usuário."""
-    if not _trava.acquire(timeout=espera_s):
+def trava_despacho(rid, espera_s=15):
+    """Use com `with trava_despacho(rid):`. Espera até 15 s; depois disso, avisa o usuário."""
+    with _trava_travas:
+        trava = _travas.setdefault(rid, threading.Lock())
+    if not trava.acquire(timeout=espera_s):
         raise HTTPException(status_code=503, detail="Já existe um despacho em andamento. Tente de novo em alguns segundos.")
     try:
         yield
     finally:
-        _trava.release()
+        trava.release()
 
 
 
@@ -97,17 +103,17 @@ def ordenar_rota(origem, pedidos, usar_ruas=True):
 # As estimativas usam linha reta (~30 km/h) para ser rápido; a ordem final
 # das paradas continua usando as ruas de verdade.
 # ---------------------------------------------------------------------
-def tempo_viagem(paradas, origem=None, ordenar=True):
+def tempo_viagem(base, paradas, origem=None, ordenar=True):
     """Segundos para sair de 'origem' (padrão: restaurante), fazer as entregas e voltar ao restaurante."""
     if not paradas:
-        return custo_reta(origem, RESTAURANTE) if origem else 0
-    origem = origem or RESTAURANTE
+        return custo_reta(origem, base) if origem else 0
+    origem = origem or base
     rota = ordenar_rota(origem, list(paradas), usar_ruas=False) if ordenar else list(paradas)
-    pontos = [origem] + rota + [RESTAURANTE]
+    pontos = [origem] + rota + [base]
     return sum(custo_reta(pontos[i], pontos[i + 1]) for i in range(len(pontos) - 1)) + len(rota) * PARADA_MIN * 60
 
 
-def estado_motoboy(m, abertas, ultima_entrega, agora=None):
+def estado_motoboy(base, m, abertas, ultima_entrega, agora=None):
     """Situação de um motoboy para o despacho.
     m: dict com lat/lng do cadastro e gps_lat/gps_lng/gps_em.
     abertas: paradas ainda não entregues (em ordem), cada uma com lat, lng, despachado_em.
@@ -117,10 +123,10 @@ def estado_motoboy(m, abertas, ultima_entrega, agora=None):
     agora = agora or agora_utc()
     gps = gps_recente(m.get("gps_em")) and m.get("gps_lat") is not None
     pos = {"lat": m["gps_lat"], "lng": m["gps_lng"]} if gps else None
-    longe = pos is not None and haversine(pos["lat"], pos["lng"], RESTAURANTE["lat"], RESTAURANTE["lng"]) > 0.3
+    longe = pos is not None and haversine(pos["lat"], pos["lng"], base["lat"], base["lng"]) > 0.3
 
     if not abertas:
-        return {"saiu": longe, "volta_s": custo_reta(pos, RESTAURANTE) if longe else 0, "proxima": []}
+        return {"saiu": longe, "volta_s": custo_reta(pos, base) if longe else 0, "proxima": []}
 
     # O próprio motoboy avisou na página dele que saiu: não há o que adivinhar.
     saiu_avisado = any(p.get("saiu_em") for p in abertas)
@@ -139,14 +145,14 @@ def estado_motoboy(m, abertas, ultima_entrega, agora=None):
     if not saiu:
         return {"saiu": False, "volta_s": 0, "proxima": list(abertas)}
     if longe:
-        volta = tempo_viagem(abertas, origem=pos, ordenar=False)
+        volta = tempo_viagem(base, abertas, origem=pos, ordenar=False)
     else:
         decorrido = (agora - desde).total_seconds() if desde else float("inf")
-        volta = max(tempo_viagem(abertas, ordenar=False) - decorrido, len(abertas) * PARADA_MIN * 60)
+        volta = max(tempo_viagem(base, abertas, ordenar=False) - decorrido, len(abertas) * PARADA_MIN * 60)
     return {"saiu": True, "volta_s": volta, "proxima": []}
 
 
-def planejar(lotes, estados, max_paradas=MAX_PARADAS_VIAGEM):
+def planejar(base, lotes, estados, max_paradas=MAX_PARADAS_VIAGEM):
     """Distribui os lotes de pedidos novos. estados: {motoboy_id: estado_motoboy(...)}.
     Para cada lote, escolhe o motoboy que termina a entrega dele mais cedo
     (empate: quem tem menos paradas).
@@ -163,9 +169,9 @@ def planejar(lotes, estados, max_paradas=MAX_PARADAS_VIAGEM):
         for mid, s in sim.items():
             atual = s["viagens"][-1] if s["viagens"] else []
             if len(atual) + len(lote) <= max_paradas:
-                fim = s["volta"] + tempo_viagem(atual + lote)
+                fim = s["volta"] + tempo_viagem(base, atual + lote)
             else:  # viagem atual cheia: este lote vai numa viagem seguinte
-                fim = s["volta"] + tempo_viagem(atual) + tempo_viagem(lote)
+                fim = s["volta"] + tempo_viagem(base, atual) + tempo_viagem(base, lote)
             chave = (round(fim), s["total"], mid)
             if melhor is None or chave < melhor[0]:
                 melhor = (chave, mid)
@@ -174,38 +180,42 @@ def planejar(lotes, estados, max_paradas=MAX_PARADAS_VIAGEM):
             s["viagens"][-1] = s["viagens"][-1] + lote
         else:
             if s["viagens"]:
-                s["volta"] += tempo_viagem(s["viagens"][-1])
+                s["volta"] += tempo_viagem(base, s["viagens"][-1])
             s["viagens"].append(list(lote))
         s["total"] += len(lote)
         s["recebeu"] = True
     return {mid: s["viagens"] for mid, s in sim.items() if s["recebeu"]}
 
 
-def ler_estados(con, ids=None, todos=False):
-    """Lê do banco a situação dos motoboys (os de turno, todos com todos=True, ou os ids pedidos)."""
+def ler_estados(con, rid, base, ids=None, todos=False):
+    """Lê do banco a situação dos motoboys do restaurante (os de turno, todos com
+    todos=True, ou os ids pedidos)."""
     if ids is None:
         motoboys = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, lat, lng, gps_lat, gps_lng, gps_em FROM motoboys" + ("" if todos else " WHERE ativo")))]
+            "SELECT id, lat, lng, gps_lat, gps_lng, gps_em FROM motoboys WHERE restaurante_id = :r"
+            + ("" if todos else " AND ativo")), {"r": rid})]
     else:
         motoboys = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, lat, lng, gps_lat, gps_lng, gps_em FROM motoboys WHERE id = :id"), {"id": ids[0]})]
+            "SELECT id, lat, lng, gps_lat, gps_lng, gps_em FROM motoboys WHERE id = :id AND restaurante_id = :r"),
+            {"id": ids[0], "r": rid})]
     abertas = {}
     for r in con.execute(text(
             "SELECT id, endereco, lat, lng, motoboy_id, ordem, despachado_em, viagem, saiu_em FROM pedidos "
-            "WHERE status = 'despachado' ORDER BY motoboy_id, ordem")):
+            "WHERE status = 'despachado' AND restaurante_id = :r ORDER BY motoboy_id, ordem"), {"r": rid}):
         abertas.setdefault(r.motoboy_id, []).append(dict(r._mapping))
     ultimas = {r[0]: r[1] for r in con.execute(text(
-        "SELECT motoboy_id, MAX(concluido_em) FROM pedidos WHERE status = 'concluido' GROUP BY motoboy_id"))}
-    estados = {m["id"]: estado_motoboy(m, abertas.get(m["id"], []), ultimas.get(m["id"])) for m in motoboys}
+        "SELECT motoboy_id, MAX(concluido_em) FROM pedidos WHERE status = 'concluido' AND restaurante_id = :r "
+        "GROUP BY motoboy_id"), {"r": rid})}
+    estados = {m["id"]: estado_motoboy(base, m, abertas.get(m["id"], []), ultimas.get(m["id"])) for m in motoboys}
     return estados, abertas
 
 
-def montar_rota(viagens):
+def montar_rota(base, viagens):
     """Ordena as paradas de cada viagem. Devolve a lista de viagens, cada uma já
     na ordem de entrega.
     Pode consultar o serviço de rotas (alguns segundos), por isso deve ser chamada
     FORA da transação do banco, para não segurar o banco esperando a internet."""
-    return [ordenar_rota(RESTAURANTE, viagem) for viagem in viagens if viagem]
+    return [ordenar_rota(base, viagem) for viagem in viagens if viagem]
 
 
 def _nova_viagem():
@@ -248,19 +258,19 @@ def gravar_rota(con, motoboy_id, viagens, saiu, abertas):
 # Usa linha reta vezes FATOR_RUAS: não consulta serviço externo, então é
 # instantâneo e funciona mesmo com o serviço de rotas fora do ar.
 # ---------------------------------------------------------------------
-def km_viagem(paradas):
+def km_viagem(base, paradas):
     """Km estimados de uma saída: restaurante -> paradas (na ordem dada) -> restaurante."""
     if not paradas:
         return 0.0
-    pontos = [RESTAURANTE] + list(paradas) + [RESTAURANTE]
+    pontos = [base] + list(paradas) + [base]
     reta = sum(haversine(pontos[i]["lat"], pontos[i]["lng"], pontos[i + 1]["lat"], pontos[i + 1]["lng"])
                for i in range(len(pontos) - 1))
     return reta * FATOR_RUAS
 
 
-def km_individual(paradas):
+def km_individual(base, paradas):
     """Km estimados se cada entrega fosse uma viagem separada (ida e volta)."""
-    return sum(2 * haversine(RESTAURANTE["lat"], RESTAURANTE["lng"], p["lat"], p["lng"]) for p in paradas) * FATOR_RUAS
+    return sum(2 * haversine(base["lat"], base["lng"], p["lat"], p["lng"]) for p in paradas) * FATOR_RUAS
 
 
 # ---------------------------------------------------------------------
@@ -269,7 +279,7 @@ def km_individual(paradas):
 RAIO_AGRUPAMENTO_KM = 2.0
 
 
-def situacao_fila(pendentes, regras, agora=None):
+def situacao_fila(base, pendentes, regras, agora=None):
     """Para cada pedido pendente (dicts com id, lat, lng, criado_em), devolve
     {id: {"vizinhos": [ids perto (regra "raio_agrupamento_km")], "aguardando": bool, "longe": bool, "km": float}}.
 
@@ -288,7 +298,7 @@ def situacao_fila(pendentes, regras, agora=None):
                     and haversine(p["lat"], p["lng"], q["lat"], q["lng"]) <= raio_grupo]
         criado = parse_ts(p.get("criado_em"))
         minutos = (agora - criado).total_seconds() / 60 if criado else 0
-        km = haversine(RESTAURANTE["lat"], RESTAURANTE["lng"], p["lat"], p["lng"])
+        km = haversine(base["lat"], base["lng"], p["lat"], p["lng"])
         resultado[p["id"]] = {
             "vizinhos": vizinhos,
             "aguardando": bool(espera and not vizinhos and minutos < espera and not (prioridade and minutos >= prioridade)),

@@ -12,9 +12,12 @@ Quem acessa o painel:
 A API_KEY também é usada por sistemas que mandam pedidos (integrações). O
 restaurante nunca precisa conhecê-la.
 
-Convites: o administrador gera um link de convite para o dono criar a conta;
-o dono (ou o administrador) gera convites para funcionários. Cada link vale
-uma vez só e expira em CONVITE_DIAS. No banco fica só o hash do link.
+Cada conta pertence a um restaurante e só vê os dados dele (veja restaurantes.py).
+
+Convites: o administrador gera um link de convite para o dono de um restaurante
+novo, que cria a conta e informa o endereço do restaurante; o dono (ou o
+administrador) gera convites para funcionários do restaurante dele. Cada link
+vale uma vez só e expira em CONVITE_DIAS. No banco fica só o hash do link.
 
 Senhas: no banco fica só o hash (PBKDF2, igual aos códigos dos motoboys).
 Sessões: depois do login, o navegador recebe um token aleatório que dura
@@ -26,10 +29,11 @@ import secrets
 from datetime import timedelta
 
 from fastapi import Depends, Header, HTTPException, Request
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 import banco
 import config
+import restaurantes
 import seguranca
 from horarios import agora_utc
 
@@ -66,6 +70,16 @@ def preparar(eng):
                 expira_em TIMESTAMP NOT NULL,
                 usado_em TIMESTAMP
             )"""))
+    # Restaurante de cada conta e de cada convite. Convite de dono sem restaurante
+    # cria um restaurante novo; por isso, nos convites, só os que já existiam
+    # antes desta coluna passam para o restaurante padrão.
+    for tabela in ("usuarios", "convites"):
+        if "restaurante_id" not in {c["name"] for c in inspect(eng).get_columns(tabela)}:
+            with eng.begin() as con:
+                con.execute(text(f"ALTER TABLE {tabela} ADD COLUMN restaurante_id INTEGER"))
+                banco.adotar_dados_antigos(con, (tabela,))
+    with eng.begin() as con:
+        banco.adotar_dados_antigos(con, ("usuarios",))
 
 
 preparar(banco.engine)
@@ -126,26 +140,56 @@ def conferir_login(con, request: Request, email: str, senha: str):
 _HASH_FALSO = seguranca.hash_codigo(secrets.token_hex(16))
 
 
-def exigir_acesso(request: Request, x_api_key: str = Header(default=""), authorization: str = Header(default="")):
+def exigir_acesso(request: Request, x_api_key: str = Header(default=""), authorization: str = Header(default=""),
+                  x_restaurante: str = Header(default="")):
     """Quem está usando o painel. Aceita a sessão (login com e-mail e senha) ou a
-    API_KEY (administrador e integrações). Devolve {"tipo", "papel", "nome", "email"}."""
+    API_KEY (administrador e integrações). Devolve {"tipo", "papel", "nome", "email",
+    "restaurante_id"}.
+
+    Quem entra com e-mail e senha só vê o próprio restaurante. O administrador vê
+    qualquer um: escolhe qual no cabeçalho X-Restaurante (o painel manda sozinho).
+    Sem o cabeçalho, se só existir um restaurante, é esse."""
     if authorization.lower().startswith("bearer "):
         token = authorization[7:].strip()
         with banco.engine.connect() as con:
             u = con.execute(text(
-                "SELECT u.email, u.nome, u.papel FROM sessoes s JOIN usuarios u ON u.email = s.email "
+                "SELECT u.email, u.nome, u.papel, u.restaurante_id FROM sessoes s JOIN usuarios u ON u.email = s.email "
                 "WHERE s.token = :t AND s.expira_em > :agora"), {"t": _hash_token(token), "agora": agora_utc()}).first()
         if u is None:
             raise HTTPException(status_code=401, detail="Sessão expirada. Entre de novo.")
-        return {"tipo": "sessao", "papel": u.papel, "nome": u.nome, "email": u.email}
+        return {"tipo": "sessao", "papel": u.papel, "nome": u.nome, "email": u.email, "restaurante_id": u.restaurante_id}
     seguranca.exigir_chave(request, x_api_key)
-    return {"tipo": "admin", "papel": "admin", "nome": "Administrador", "email": None}
+    with banco.engine.connect() as con:
+        existentes = restaurantes.ids(con)
+    rid = None
+    if x_restaurante.strip():
+        rid = int(x_restaurante) if x_restaurante.strip().isdigit() and int(x_restaurante) in existentes else None
+    elif len(existentes) == 1:
+        rid = existentes[0]
+    return {"tipo": "admin", "papel": "admin", "nome": "Administrador", "email": None, "restaurante_id": rid}
+
+
+def restaurante_atual(acesso=Depends(exigir_acesso)) -> int:
+    """Id do restaurante em que a pessoa está mexendo. Todo pedido, motoboy e regra
+    é lido e gravado só dentro dele."""
+    if acesso["restaurante_id"] is None:
+        if acesso["papel"] == "admin":
+            raise HTTPException(status_code=400, detail="Escolha um restaurante no topo do painel "
+                                                        "(integrações: cabeçalho X-Restaurante com o número dele).")
+        raise HTTPException(status_code=403, detail="Sua conta não está ligada a nenhum restaurante.")
+    return acesso["restaurante_id"]
 
 
 def exigir_gestor(acesso=Depends(exigir_acesso)):
-    """Só dono ou administrador (regras, cadastro de motoboys, equipe)."""
+    """Só dono ou administrador (regras, cadastro de motoboys, equipe, endereço do restaurante)."""
     if acesso["papel"] not in ("dono", "admin"):
         raise HTTPException(status_code=403, detail="Só o dono do restaurante pode fazer isso.")
+    return acesso
+
+
+def exigir_admin(acesso=Depends(exigir_acesso)):
+    if acesso["papel"] != "admin":
+        raise HTTPException(status_code=403, detail="Só o administrador do sistema pode fazer isso.")
     return acesso
 
 
@@ -161,10 +205,11 @@ def config_ok():
 # ---------------------------------------------------------------------
 # Convites (link de uso único para criar conta)
 # ---------------------------------------------------------------------
-def criar_convite(con, papel: str, criado_por: str) -> str:
+def criar_convite(con, papel: str, criado_por: str, restaurante_id) -> str:
+    """restaurante_id None (só convite de dono): quem aceitar cria um restaurante novo."""
     token = secrets.token_urlsafe(24)
-    con.execute(text("INSERT INTO convites (token, papel, criado_por, expira_em) VALUES (:t, :p, :c, :x)"),
-                {"t": _hash_token(token), "p": papel, "c": criado_por,
+    con.execute(text("INSERT INTO convites (token, papel, criado_por, expira_em, restaurante_id) VALUES (:t, :p, :c, :x, :r)"),
+                {"t": _hash_token(token), "p": papel, "c": criado_por, "r": restaurante_id,
                  "x": agora_utc() + timedelta(days=CONVITE_DIAS)})
     return token
 
@@ -172,7 +217,8 @@ def criar_convite(con, papel: str, criado_por: str) -> str:
 def ler_convite(con, token: str):
     """O convite, se ainda vale (não usado e não vencido); senão None."""
     return con.execute(text(
-        "SELECT token, papel, expira_em FROM convites WHERE token = :t AND usado_em IS NULL AND expira_em > :agora"),
+        "SELECT token, papel, expira_em, restaurante_id FROM convites "
+        "WHERE token = :t AND usado_em IS NULL AND expira_em > :agora"),
         {"t": _hash_token(token or ""), "agora": agora_utc()}).first()
 
 

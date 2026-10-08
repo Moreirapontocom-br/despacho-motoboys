@@ -7,6 +7,7 @@ partes; cada assunto fica no seu próprio arquivo:
     config.py        variáveis de ambiente (chaves, local do restaurante, ajustes)
     horarios.py      horários e fuso (o banco guarda tudo em UTC)
     banco.py         conexão, tabelas e atualização de bancos antigos
+    restaurantes.py  os restaurantes do sistema e o endereço de cada um
     seguranca.py     chave do painel, códigos dos motoboys, limite de tentativas
     contas.py        login com e-mail e senha, sessões, dono x funcionário
     api_contas.py    endereços de login e da equipe

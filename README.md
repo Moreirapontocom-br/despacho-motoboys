@@ -9,6 +9,17 @@ rota no celular, com mapa, navegação pelo Google Maps e botão de "Entregue".
 
 ## O que ele faz
 
+**Vários restaurantes no mesmo sistema** (até 6; dá para aumentar com `MAX_RESTAURANTES`)
+- Cada restaurante tem os **próprios pedidos, motoboys, regras, equipe e endereço**. Um
+  nunca vê os dados do outro
+- O **endereço do restaurante** (de onde os motoboys saem e para onde voltam) é informado
+  pelo dono ao criar a conta, conferindo o pino no mapa. Depois, **só o dono** (ou o
+  administrador) muda, em 👤 Conta → "Meu restaurante"
+- O **administrador** (quem tem a `API_KEY`) vê todos: escolhe o restaurante no topo do
+  painel e, em 👤 Conta → "Restaurantes", vê o movimento de hoje de cada um (fila, em rota,
+  entregues, motoboys de turno e dono)
+- O nome do motoboy é o link dele (`/m/NOME`), então não pode repetir entre restaurantes
+
 **Login** (`/painel`)
 - Cada pessoa entra com **e-mail e senha** e fica conectada por até 30 dias (até tocar em "Sair")
 - **Dono**: tudo. **Funcionário**: pedidos, despacho, turno dos motoboys e relatórios (não
@@ -16,9 +27,9 @@ rota no celular, com mapa, navegação pelo Google Maps e botão de "Entregue".
 - **Administrador do sistema**: quem tem a `API_KEY` entra pelo link "Entrar com a chave de
   administrador", com acesso total, e pode definir senha nova para qualquer pessoa (é assim
   que se recupera o acesso se o dono esquecer a senha). **A chave fica só com o administrador**
-- **Ativar um restaurante**: o administrador entra, vai em 👤 Conta → "Convidar dono do
-  restaurante" e manda o link (tem botão de WhatsApp). O dono abre e cria e-mail e senha.
-  Só o administrador convida ou cadastra donos
+- **Ativar um restaurante**: o administrador entra, vai em 👤 Conta → "Convidar dono de um
+  restaurante novo" e manda o link (tem botão de WhatsApp). O dono abre, cria e-mail e senha
+  e informa o nome e o endereço do restaurante. Só o administrador convida ou cadastra donos
 - **Convidar funcionários**: o dono gera um link em 👤 Conta → "Convidar funcionário"
 - Todo link de convite **vale uma vez só e vence em 7 dias**; no banco fica só o hash dele.
   Enquanto não existe nenhuma conta, o painel avisa que o sistema ainda não foi ativado
@@ -101,15 +112,24 @@ Configure no painel do Render, em **Environment**. **Nunca coloque chaves no có
 | `API_KEY` | Senha do painel do restaurante. Use 32+ caracteres aleatórios. Gere com: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `DATABASE_URL` | Endereço do banco Postgres (o Render cria ao adicionar um banco). Sem ela, o sistema usa um arquivo SQLite local, só para testes. |
 
-### Restaurante
+### Restaurantes
 
 | Variável | Padrão | O que é |
 |---|---|---|
-| `RESTAURANTE_LAT` / `RESTAURANTE_LNG` | Itabira (MG) | Localização do restaurante |
-| `RESTAURANTE_ENDERECO` | — | Endereço em texto, usado como ponto de partida no Google Maps |
-| `RESTAURANTE_NOME` | — | Aparece na mensagem de WhatsApp para o cliente |
-| `RESTAURANTE_CIDADE` | `Itabira, MG` | Cidade que já vem preenchida no cadastro de pedidos |
-| `TIMEZONE_OFFSET_HORAS` | `-3` | Fuso horário em relação ao UTC |
+| `MAX_RESTAURANTES` | `6` | Quantos restaurantes o sistema aceita |
+| `TIMEZONE_OFFSET_HORAS` | `-3` | Fuso horário em relação ao UTC (vale para todos os restaurantes) |
+
+O nome, o endereço e a cidade de cada restaurante ficam no banco (o dono informa no
+painel). As variáveis abaixo só servem para **instalações antigas, de um restaurante só**:
+na atualização, os pedidos, motoboys, regras e contas que já existiam passam a ser do
+"restaurante 1", criado com estes dados. Depois disso, o dono ajusta no painel.
+
+| Variável | Padrão | O que é |
+|---|---|---|
+| `RESTAURANTE_LAT` / `RESTAURANTE_LNG` | Itabira (MG) | Localização do restaurante 1 |
+| `RESTAURANTE_ENDERECO` | — | Endereço em texto do restaurante 1 |
+| `RESTAURANTE_NOME` | — | Nome do restaurante 1 |
+| `RESTAURANTE_CIDADE` | `Itabira, MG` | Cidade do restaurante 1 |
 
 ### Mapas e rotas
 
@@ -145,7 +165,8 @@ inicial, até alguém salvar as regras.
 | `config.py` | Todas as variáveis de ambiente, num lugar só |
 | `horarios.py` | Horários e fuso. Regra: o banco guarda tudo em UTC |
 | `banco.py` | Conexão, criação das tabelas e atualização de bancos antigos |
-| `ajustes.py` | Modo de despacho e regras escolhidos no painel |
+| `restaurantes.py` | Os restaurantes do sistema, endereço de cada um e o limite |
+| `ajustes.py` | Modo de despacho e regras escolhidos no painel (um conjunto por restaurante) |
 | `seguranca.py` | Chave do painel, códigos dos motoboys, limite de tentativas |
 | `contas.py` | Login com e-mail e senha, sessões, dono x funcionário |
 | `api_contas.py` | Endereços de login e da equipe |
@@ -197,6 +218,9 @@ reais nunca são tocados. Eles também rodam sozinhos no GitHub a cada envio de 
 
 - O painel exige login (sessão de e-mail e senha, no cabeçalho `Authorization: Bearer`) ou a
   `API_KEY` no cabeçalho `X-API-Key` (administrador e integrações que mandam pedidos).
+- Quem entra com e-mail e senha só lê e grava dados do próprio restaurante. Com a `API_KEY`,
+  o restaurante vai no cabeçalho `X-Restaurante` (o número dele, visto em 👤 Conta →
+  "Restaurantes"); se só existir um restaurante, o cabeçalho pode ficar de fora.
 - Senhas guardadas só como hash (PBKDF2). Das sessões, o banco guarda só o hash do token.
   Trocar ou redefinir uma senha desconecta a pessoa de todos os aparelhos.
 - Senha errada várias vezes bloqueia por 15 minutos (por IP e por e-mail).

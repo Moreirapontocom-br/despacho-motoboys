@@ -12,8 +12,9 @@ from sqlalchemy import text
 
 import banco
 import paginas
+import restaurantes
 from api_painel import rotulo
-from config import FATOR_RUAS, RESTAURANTE
+from config import FATOR_RUAS
 from horarios import agora_utc, gps_recente, inicio_do_dia_utc, parse_ts
 from mapas import custo_reta, trajeto
 from seguranca import conferir_codigo
@@ -30,14 +31,14 @@ class Disponivel(BaseModel):
     ativo: bool
 
 
-def _estimar_minutos(paradas, origem):
+def _estimar_minutos(base, paradas, origem):
     """Minutos estimados de cada trecho (da parada anterior até esta). Quando a
-    parada é de uma saída seguinte, o trecho passa pelo restaurante. Estimativa
+    parada é de uma saída seguinte, o trecho passa pelo restaurante (base). Estimativa
     em linha reta x FATOR_RUAS a ~30 km/h: serve de referência, não é exata."""
     anterior, viagem = origem, None
     for p in paradas:
         if viagem is not None and p.get("viagem") != viagem:
-            segundos = custo_reta(anterior, RESTAURANTE) + custo_reta(RESTAURANTE, p)
+            segundos = custo_reta(anterior, base) + custo_reta(base, p)
             p["volta_antes"] = True  # precisa passar no restaurante para pegar este
         else:
             segundos = custo_reta(anterior, p)
@@ -50,8 +51,9 @@ def _estimar_minutos(paradas, origem):
 def rota_do_motoboy(motoboy_id: str, request: Request, x_codigo: str = Header(default="")):
     with banco.engine.connect() as con:
         conferir_codigo(con, request, motoboy_id, x_codigo)
-        motoboy = con.execute(text("SELECT ativo, gps_lat, gps_lng, gps_em FROM motoboys WHERE id = :id"),
+        motoboy = con.execute(text("SELECT ativo, gps_lat, gps_lng, gps_em, restaurante_id FROM motoboys WHERE id = :id"),
                               {"id": motoboy_id}).first()
+        base = restaurantes.ponto(con, motoboy.restaurante_id)
         entregues_hoje = con.execute(text(
             "SELECT COUNT(*) FROM pedidos WHERE motoboy_id = :id AND status = 'concluido' AND concluido_em >= :ini"),
             {"id": motoboy_id, "ini": inicio_do_dia_utc()}).scalar()
@@ -72,14 +74,14 @@ def rota_do_motoboy(motoboy_id: str, request: Request, x_codigo: str = Header(de
         p["rotulo"] = rotulo(p["num"], p["id"])
         p["saiu"] = bool(p.pop("saiu_em"))
     gps = None
-    if motoboy is not None and gps_recente(motoboy.gps_em) and motoboy.gps_lat is not None:
+    if gps_recente(motoboy.gps_em) and motoboy.gps_lat is not None:
         gps = {"lat": motoboy.gps_lat, "lng": motoboy.gps_lng}
     # Já na rua com GPS: a estimativa da 1ª parada sai de onde ele está.
-    _estimar_minutos(paradas, gps if gps and paradas and paradas[0]["saiu"] else RESTAURANTE)
-    return {"motoboy_id": motoboy_id, "ativo": bool(motoboy.ativo) if motoboy is not None else False,
-            "restaurante": RESTAURANTE, "paradas": paradas, "cancelados": cancelados, "gps": gps,
+    _estimar_minutos(base, paradas, gps if gps and paradas and paradas[0]["saiu"] else base)
+    return {"motoboy_id": motoboy_id, "ativo": bool(motoboy.ativo),
+            "restaurante": base, "paradas": paradas, "cancelados": cancelados, "gps": gps,
             "hoje": {"entregas": entregues_hoje},
-            "trajeto": trajeto(RESTAURANTE, paradas) if paradas else None}
+            "trajeto": trajeto(base, paradas) if paradas else None}
 
 
 @router.post("/rotas/{motoboy_id}/entregar/{pedido_id}")

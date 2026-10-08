@@ -176,7 +176,7 @@ function pinIcone(texto, classe, largura) { return L.divIcon({className: "", htm
 function desenharMapa(d) {
   if (typeof L === "undefined") return;
   if (!mapa) {
-    mapa = L.map("mapa", {zoomControl: false}).setView([CONFIG.restaurante.lat, CONFIG.restaurante.lng], 14);
+    mapa = L.map("mapa", {zoomControl: false}).setView([d.restaurante.lat, d.restaurante.lng], 14);
     L.tileLayer(CONFIG.mapaUrl, {maxZoom: 19, subdomains: "abc", attribution: CONFIG.mapaCredito}).addTo(mapa);
     camada = L.layerGroup().addTo(mapa);
   }
