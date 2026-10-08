@@ -29,7 +29,7 @@ import restaurantes
 from config import (AUTOMATICO_INTERVALO_S, PEDIDO_ATRASO_MIN, PRAZO_ENTREGA_MIN, RESTAURANTE_CIDADE, ROTA_ATRASO_MIN,
                     log)
 from horarios import agora_utc, fmt_local, gps_recente, inicio_do_dia_utc, para_local, parse_ts
-from mapas import buscar_endereco
+from mapas import buscar_endereco, haversine
 from seguranca import hash_codigo
 
 # Tudo aqui exige login (e-mail e senha) ou a API_KEY. Algumas ações (regras,
@@ -395,6 +395,19 @@ def despachar(corpo: Optional[Despacho] = None, rid=Restaurante):
         return _despachar_sem_trava(rid, plano_ids=corpo.plano if corpo else None)
 
 
+def _texto_agrupamento(pedidos):
+    """"Leva #102 e #105 juntos (~1,3 km um do outro)". Com 3 ou mais, a distância
+    é a dos dois mais afastados. Distância em linha reta."""
+    em_ordem = sorted(pedidos, key=lambda p: (p.get("num") is None, p.get("num") or 0, p["id"]))
+    rotulos = [rotulo(p.get("num"), p["id"]) for p in em_ordem]
+    lista = ", ".join(rotulos[:-1]) + " e " + rotulos[-1]
+    km = max(haversine(a["lat"], a["lng"], b["lat"], b["lng"]) for i, a in enumerate(pedidos) for b in pedidos[i + 1:])
+    distancia = f"{km:.1f}".replace(".", ",") + " km"
+    if len(pedidos) == 2:
+        return f"Leva {lista} juntos (~{distancia} um do outro)"
+    return f"Leva {lista} juntos (no máximo ~{distancia} entre eles)"
+
+
 def _motivos(base, mid, viagens, estados, abertas, novos_ids, plano):
     """Por que o sistema escolheu este motoboy, em frases curtas, e em quantos
     minutos ele termina tudo e volta ao restaurante (estimativa em linha reta)."""
@@ -411,7 +424,7 @@ def _motivos(base, mid, viagens, estados, abertas, novos_ids, plano):
     else:
         motivos.append(f"Está na rua; volta em ~{max(1, round(est['volta_s'] / 60))} min e leva estes na próxima saída")
     if len(novos) > 1:
-        motivos.append(f"Leva {len(novos)} pedidos juntos, perto um do outro")
+        motivos.append(_texto_agrupamento(novos))
     # Compara com o melhor outro motoboy levando os mesmos pedidos. Quem já recebeu
     # outros pedidos nesta mesma sugestão só poderia levar estes depois deles.
     alternativas = []
@@ -775,26 +788,34 @@ def estatisticas(dias: int = 1, rid=Restaurante):
 
 @router.get("/historico.csv")
 def historico_csv(dias: int = 30, rid=Restaurante):
-    """Baixa em CSV as entregas concluídas dos últimos N dias (30 por padrão, no
-    máximo 365), para abrir no Excel ou guardar."""
+    """Baixa em CSV os pedidos entregues e cancelados dos últimos N dias (30 por
+    padrão, no máximo 365), para abrir no Excel ou guardar.
+
+    "Saiu em" só existe quando o motoboy tocou em "Saí do restaurante"; pedidos
+    antigos ou de quem não tocou ficam em branco."""
     dias = max(1, min(dias, 365))
     with banco.engine.connect() as con:
         linhas = [dict(r._mapping) for r in con.execute(text(
-            "SELECT id, num, cliente, endereco, bairro, complemento, referencia, telefone, motoboy_id, criado_em, concluido_em "
-            "FROM pedidos WHERE restaurante_id = :r AND status = 'concluido' AND concluido_em >= :inicio ORDER BY concluido_em"),
+            "SELECT id, num, status, cliente, endereco, bairro, complemento, referencia, telefone, motoboy_id, "
+            "criado_em, despachado_em, saiu_em, concluido_em, cancelado_em FROM pedidos "
+            "WHERE restaurante_id = :r AND status IN ('concluido', 'cancelado') "
+            "AND COALESCE(concluido_em, cancelado_em) >= :inicio ORDER BY COALESCE(concluido_em, cancelado_em)"),
             {"r": rid, "inicio": inicio_do_dia_utc(dias_atras=dias - 1)})]
 
     saida = io.StringIO()
     saida.write("﻿")  # marca de ordem de bytes: sem isso o Excel no Windows pode exibir acentos errados
     escritor = csv.writer(saida, delimiter=";")
-    escritor.writerow(["Pedido", "Nº do dia", "Cliente", "Endereço", "Bairro", "Complemento", "Referência", "Telefone",
-                       "Motoboy", "Criado em", "Entregue em", "Tempo (min)"])
+    escritor.writerow(["Pedido", "Nº do dia", "Status", "Cliente", "Endereço", "Bairro", "Complemento", "Referência",
+                       "Telefone", "Motoboy", "Criado em", "Despachado em", "Saiu em", "Entregue em", "Cancelado em",
+                       "Tempo (min)"])
     for p in linhas:
         criado_t, concluido_t = parse_ts(p["criado_em"]), parse_ts(p["concluido_em"])
-        tempo = round((concluido_t - criado_t).total_seconds() / 60, 1) if criado_t else ""
-        escritor.writerow([p["id"], p["num"] or "", p["cliente"] or "", p["endereco"], p["bairro"] or "", p["complemento"] or "",
+        tempo = round((concluido_t - criado_t).total_seconds() / 60, 1) if criado_t and concluido_t else ""
+        escritor.writerow([p["id"], p["num"] or "", "Entregue" if p["status"] == "concluido" else "Cancelado",
+                           p["cliente"] or "", p["endereco"], p["bairro"] or "", p["complemento"] or "",
                            p["referencia"] or "", p["telefone"] or "", p["motoboy_id"] or "",
-                           fmt_local(criado_t), fmt_local(concluido_t), tempo])
+                           fmt_local(criado_t), fmt_local(parse_ts(p["despachado_em"])), fmt_local(parse_ts(p["saiu_em"])),
+                           fmt_local(concluido_t), fmt_local(parse_ts(p["cancelado_em"])), tempo])
 
     nome_arquivo = f"historico_{para_local(agora_utc()).strftime('%Y-%m-%d')}.csv"
     return Response(content=saida.getvalue(), media_type="text/csv; charset=utf-8",

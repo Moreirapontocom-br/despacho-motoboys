@@ -684,6 +684,35 @@ def test_previa_explica_a_escolha(api):
     assert sorted(r["motoboys"]) == ["Ana", "Carlos"]
 
 
+def test_previa_diz_quais_pedidos_vao_juntos_e_a_distancia(api):
+    novo_motoboy(api, "Carlos")
+    a = novo_pedido(api, lat=-19.630, lng=-43.240)["rotulo"]
+    b = novo_pedido(api, lat=-19.639, lng=-43.240)["rotulo"]  # ~1 km do outro
+    motivos = api.post("/despachar/previa", headers=CHAVE).json()["sugestoes"][0]["motivos"]
+    assert f"Leva {a} e {b} juntos (~1,0 km um do outro)" in motivos
+
+
+def test_historico_csv_traz_cancelados_e_horarios(api):
+    novo_motoboy(api, "Carlos")
+    entregue = novo_pedido(api, lat=-19.630, lng=-43.240)["id"]
+    cancelado = novo_pedido(api, lat=-19.700, lng=-43.300)["id"]
+    api.post(f"/pedidos/{entregue}/atribuir", json={"motoboy_id": "Carlos"}, headers=CHAVE)
+    api.post("/rotas/Carlos/saiu", headers={"X-Codigo": CODIGO})
+    api.post(f"/rotas/Carlos/entregar/{entregue}", headers={"X-Codigo": CODIGO})
+    api.post(f"/pedidos/{cancelado}/cancelar", headers=CHAVE)
+    novo_pedido(api)  # ainda na fila: não entra no histórico
+    linhas = api.get("/historico.csv", headers=CHAVE).text.lstrip("﻿").strip().splitlines()
+    cab = linhas[0].split(";")
+    assert ["Status", "Despachado em", "Saiu em", "Cancelado em"] == [c for c in cab if c in
+                                                                     ("Status", "Despachado em", "Saiu em", "Cancelado em")]
+    dados = {l.split(";")[0]: dict(zip(cab, l.split(";"))) for l in linhas[1:]}
+    assert set(dados) == {entregue, cancelado}
+    assert dados[entregue]["Status"] == "Entregue" and dados[entregue]["Despachado em"] and dados[entregue]["Saiu em"]
+    assert dados[entregue]["Tempo (min)"] != ""
+    assert dados[cancelado]["Status"] == "Cancelado" and dados[cancelado]["Cancelado em"]
+    assert dados[cancelado]["Entregue em"] == "" and dados[cancelado]["Tempo (min)"] == ""
+
+
 def test_escolher_outro_motoboy_na_previa(api):
     novo_motoboy(api, "Carlos")
     novo_motoboy(api, "Ana")

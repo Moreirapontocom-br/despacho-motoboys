@@ -66,7 +66,11 @@ rota no celular, com mapa, navegação pelo Google Maps e botão de "Entregue".
   e economizados, tempo médio, % no prazo, comparação com o período anterior e uma
   tabela por motoboy
 - Botão de WhatsApp para avisar o cliente que o pedido saiu
-- Resumo do dia (pendentes, em rota, entregues, tempo médio) e histórico em CSV
+- Resumo do dia (pendentes, em rota, entregues, tempo médio) e histórico em CSV, com os
+  pedidos entregues e cancelados, o status e os horários de criação, despacho, saída do
+  restaurante, entrega e cancelamento
+- A sugestão de despacho diz quais pedidos vão juntos e a distância entre eles
+  (ex.: "Leva #102 e #105 juntos (~1,3 km um do outro)")
 - Cadastro de motoboys só com nome, WhatsApp e tipo (próprio ou terceirizado): o código
   é gerado sozinho e o painel mostra o link, um QR Code e um botão para mandar o link
   no WhatsApp dele. Controle de turno
