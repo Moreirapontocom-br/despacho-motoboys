@@ -12,176 +12,278 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,400;0,500;0,600;0,700;1,700&display=swap" rel="stylesheet">
 <style>
+ /* Visual entregaAI: o mesmo grafite, azul e Poppins da tela de login.
+    Verde-água, âmbar e coral só marcam a situação do pedido; cada motoboy tem uma cor fixa. */
  :root{
-  --fundo:#f1f3f6; --cartao:#fff; --texto:#1f2937; --suave:#6b7280; --borda:#e5e7eb;
-  --azul:#2563eb; --verde:#059669; --vermelho:#dc2626; --vermelho-claro:#fef2f2; --amarelo:#fef3c7;
-  --escuro:#111827; --raio:10px;
+  --fundo:#1C1B26; --cartao:#2B2A37; --campo:#343442; --campo-hover:#3A3A49; --linha:#383847; --borda:#474958;
+  --texto:#F6F7FA; --suave:#A2A5B3; --apagado:#777C8D;
+  --azul:#289BEF; --azul-claro:#43B2FF; --botao:#1877BE; --botao-hover:#156CAD; --botao-ativo:#115C94;
+  --sec:#515766; --sec-hover:#5C6373;
+  --ok:#49C99A; --atencao:#F2B33D; --atraso:#F07178;
+  --ok-fundo:rgba(73,201,154,.14); --atencao-fundo:rgba(242,179,61,.14); --atraso-fundo:rgba(240,113,120,.15); --azul-fundo:rgba(40,155,239,.14);
+  --verde:var(--ok); --vermelho:var(--atraso); --escuro:var(--fundo);
+  --raio:14px; --raio-campo:10px; --fonte:"Poppins",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:dark;
  }
  *{box-sizing:border-box}
- body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:var(--fundo);color:var(--texto);font-size:15px}
+ ::selection{background:rgba(40,155,239,.38);color:#fff}
+ html{scrollbar-color:var(--sec) transparent}
+ body{font-family:var(--fonte);margin:0;background:var(--fundo);color:var(--texto);font-size:14px;line-height:1.45;
+      caret-color:var(--azul-claro);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
  input,select,button{font:inherit}
- input,select{padding:8px;border-radius:6px;border:1px solid #cfd4dc;background:#fff;color:var(--texto);min-width:0}
- button{padding:8px 14px;border:0;border-radius:6px;background:var(--azul);color:#fff;cursor:pointer;white-space:nowrap}
- button:disabled{opacity:.5;cursor:default}
- button.verde{background:var(--verde)} button.cinza{background:#6b7280} button.perigo{background:#b91c1c}
- button.claro{background:#e5e7eb;color:var(--texto)}
- button.on{background:var(--verde)} button.off{background:#9ca3af}
- button.mini{padding:4px 9px;font-size:.85rem}
+ input,select{padding:10px 12px;border-radius:var(--raio-campo);border:1px solid transparent;background:var(--campo);color:var(--texto);min-width:0;
+              transition:background .15s ease-out,border-color .15s ease-out,box-shadow .15s ease-out}
+ input:hover,select:hover{background:var(--campo-hover)}
+ input::placeholder{color:var(--suave)}
+ input:focus,select:focus{border-color:var(--azul);outline:none;box-shadow:0 0 0 3px rgba(40,155,239,.22)}
+ input[type=checkbox]{accent-color:var(--azul)}
+ :focus-visible{outline:2px solid var(--azul-claro);outline-offset:2px}
+ a{color:var(--azul-claro);text-underline-offset:3px}
+ button{padding:9px 18px;border:0;border-radius:999px;background:var(--botao);color:#fff;cursor:pointer;white-space:nowrap;font-weight:600;
+        transition:background .15s ease-out,transform .15s ease-out}
+ button:hover{background:var(--botao-hover)}
+ button:active{transform:translateY(1px)}
+ button:disabled{opacity:.5;cursor:default;transform:none}
+ button.verde{background:var(--botao)} button.verde:hover{background:var(--botao-hover)} button.verde:active{background:var(--botao-ativo)}
+ button.cinza,button.claro{background:var(--sec);color:var(--texto)} button.cinza:hover,button.claro:hover{background:var(--sec-hover)}
+ /* Perigo é neutro em repouso: o coral fica reservado para pedido atrasado e só aparece no hover */
+ button.perigo{background:transparent;color:var(--suave);box-shadow:inset 0 0 0 1px var(--borda)}
+ button.perigo:hover{background:var(--atraso-fundo);color:var(--atraso);box-shadow:inset 0 0 0 1px rgba(240,113,120,.45)}
+ button.on{background:var(--ok-fundo);color:var(--ok);box-shadow:inset 0 0 0 1px rgba(73,201,154,.4)} button.on:hover{background:rgba(73,201,154,.22)}
+ button.off{background:var(--campo);color:var(--suave)} button.off:hover{background:var(--campo-hover)}
+ button.mini{padding:5px 12px;font-size:.82rem}
+ kbd{font-family:inherit;font-size:.8em;border-radius:6px;padding:1px 6px;background:var(--campo);color:var(--texto)}
+ details summary{cursor:pointer}
+ details summary::marker{color:var(--apagado)}
 
- /* Cabeçalho */
+ /* Barra do topo: marca, abas em pílula, restaurante, relógio e conta */
  .topo{position:sticky;top:0;z-index:1000}
- header{background:var(--escuro);color:#fff;padding:10px 16px;
-        display:flex;gap:10px;align-items:center;flex-wrap:wrap}
- header h1{font-size:1.05rem;margin:0 8px 0 0;font-weight:700}
+ header{background:var(--cartao);padding:10px 24px;min-height:64px;display:flex;gap:12px 24px;align-items:center;flex-wrap:wrap;
+        box-shadow:0 1px 0 var(--linha)}
+ .marca{display:flex;align-items:center;gap:10px;flex:none}
+ .marca__bola{width:28px;height:28px;border-radius:50%;background:var(--azul);display:grid;place-items:center;flex:none}
+ .marca__nome{font-weight:600;font-size:16px;letter-spacing:-.2px} .marca__nome b{font-weight:700} .ponto{color:var(--azul)}
+ header h1{font-size:.88rem;margin:0;font-weight:500;color:var(--suave);max-width:min(360px,30vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
  header .espaco{flex:1}
- #login{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
- #login input{width:230px;border:0}
- #relogio{font-variant-numeric:tabular-nums;color:#d1d5db}
+ #relogio{font-weight:600;color:var(--texto)}
+ .abas{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
+ .abas button{background:none;color:var(--suave);padding:8px 16px;font-weight:500}
+ .abas button:hover{background:var(--campo);color:var(--texto)}
+ .abas button.sel{background:var(--campo);color:var(--texto)}
 
- /* Faixa de resumo + despacho */
- .faixa{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;padding:12px 16px 0}
- .cartoes{display:grid;grid-template-columns:repeat(auto-fit,minmax(84px,1fr));gap:8px;flex:1 1 420px;min-width:0}
- .cartao{background:var(--cartao);border-radius:var(--raio);padding:8px 10px;text-align:center;border:1px solid var(--borda)}
- .cartao .num{font-size:1.5rem;font-weight:700;font-variant-numeric:tabular-nums}
- .cartao .rot{font-size:.78rem;color:var(--suave)}
- .cartao.alerta{background:var(--vermelho-claro);border-color:#fecaca;color:var(--vermelho)}
- #despachar{font-size:1.1rem;font-weight:700;padding:12px 22px;background:var(--verde);border-radius:var(--raio);flex:1 1 200px;max-width:100%}
- @media (min-width:900px){ #despachar{flex:0 0 auto} }
- #msgDespacho{padding:6px 16px 0;min-height:1em}
+ /* Faixa de números do dia + despacho */
+ .faixa{display:flex;gap:12px;flex-wrap:wrap;align-items:stretch;padding:16px 24px 0}
+ .cartoes{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px;flex:1 1 560px;min-width:0}
+ .cartao{background:var(--cartao);border-radius:12px;padding:10px 14px;text-align:left}
+ .cartao .num{font-size:1.4rem;font-weight:700;line-height:1.2}
+ .cartao .rot{font-size:.76rem;color:var(--suave);font-weight:500;display:flex;align-items:center;gap:6px}
+ .cartao .rot i{width:8px;height:8px;border-radius:50%;flex:none}
+ .cartao.verde-c .num{color:var(--ok)}
+ .cartao.amarelo-c.alerta{background:var(--atencao-fundo)} .cartao.amarelo-c.alerta .num{color:var(--atencao)}
+ .cartao.alerta{background:var(--atraso-fundo)} .cartao.alerta .num{color:var(--atraso)}
+ #despachar{font-size:1rem;font-weight:600;padding:12px 32px;flex:0 1 auto;min-height:60px;align-self:center}
+ #msgDespacho{padding:8px 24px 0;min-height:1em;font-weight:500}
+ #msgDespacho:empty{display:none}
 
- /* Grade principal: lado a lado em telas grandes */
- .grade{display:grid;gap:12px;padding:12px 16px 24px;align-items:start;
-        grid-template-columns:minmax(0,1fr);grid-template-areas:"form" "fila" "mapa"}
+ /* Modo de despacho e regras */
+ #barraModo{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 24px 0}
+ .seg{display:inline-flex;border-radius:999px;background:var(--cartao);padding:3px}
+ .seg button{background:transparent;color:var(--suave);padding:6px 16px;font-weight:500}
+ .seg button:hover{background:var(--campo);color:var(--texto)}
+ .seg button.sel{background:var(--campo);color:var(--texto)}
+ #infoAuto{font-size:.84rem;color:var(--suave)}
+ #regras{display:none;margin:12px 24px 0;background:var(--cartao);border-radius:var(--raio);padding:20px;max-width:780px}
+ #regras h2{font-size:1rem;font-weight:600}
+ #regras .regra{padding:12px 0;border-top:1px solid var(--linha)}
+ #regras .regra label{font-weight:500}
+ #regras .regra input{width:80px;padding:7px;margin:0 6px;text-align:center;font-weight:700}
+ #regras .explica{font-size:.84rem;color:var(--suave);margin-top:4px}
+
+ /* Sugestão do modo assistido */
+ #sugestao{display:none;margin:12px 24px 0;background:var(--cartao);border-radius:var(--raio);padding:20px;box-shadow:inset 0 0 0 1px rgba(40,155,239,.5)}
+ #sugestao h2{margin:0 0 12px;font-size:1.05rem;font-weight:600}
+ .economia{background:var(--azul-fundo);color:var(--texto);border-radius:var(--raio-campo);padding:10px 14px;margin-bottom:12px;font-weight:500}
+ .economia.sem{background:var(--atencao-fundo)}
+ .sug-moto{background:var(--campo);border-radius:12px;padding:12px 14px;margin-bottom:8px}
+ .sug-moto .quem{font-weight:600;display:flex;align-items:center;gap:8px}
+ .sug-viagem{font-size:.9rem;margin:6px 0 0 18px}
+ .sug-viagem .antigo{color:var(--suave)}
+ .sug-numeros{font-size:.86rem;color:var(--suave);margin:2px 0 0 18px}
+ .porque{margin:4px 0 0 18px;font-size:.85rem;color:var(--texto)}
+ .porque li{display:flex;gap:8px;align-items:baseline}
+ .porque li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none;transform:translateY(-2px)}
+ .sug-moto select{background:var(--cartao)}
+ .sugTopo{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}
+ .sugTopo .economia{flex:1 1 360px;margin:0}
+ .sugLista{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px}
+ .sugLista .sug-moto{margin:0}
+ .saiu{margin-top:12px;font-size:.8rem;color:var(--suave);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+ .saiu:empty{display:none}
+ .saiu span{background:var(--campo);border-radius:999px;padding:2px 10px}
+ .sug-moto.trocado{box-shadow:inset 0 0 0 1px rgba(242,179,61,.6);background:var(--atencao-fundo)}
+ #economiaHoje{margin:12px 24px 0;display:none;background:var(--azul-fundo);color:var(--texto);border-radius:12px;padding:10px 14px;font-weight:500;font-size:.9rem}
+
+ /* Grade da operação: pedido + fila | quadro dos motoboys | mapa */
+ .grade{display:grid;gap:16px;padding:16px 24px 32px;align-items:start;
+        grid-template-columns:minmax(0,1fr);grid-template-areas:"form" "motos" "mapa"}
  @media (min-width:900px){
-  .grade{grid-template-columns:minmax(330px,380px) minmax(0,1fr);grid-template-areas:"form fila" "mapa mapa"}
+  .grade{grid-template-columns:minmax(300px,340px) minmax(0,1fr);grid-template-areas:"form motos" "mapa mapa"}
  }
  @media (min-width:1280px){
-  .grade{grid-template-columns:minmax(320px,360px) minmax(360px,1fr) minmax(460px,1.35fr);grid-template-areas:"form fila mapa"}
-  #colMapa{position:sticky;top:110px}
+  .grade{grid-template-columns:minmax(290px,320px) minmax(0,1fr) minmax(300px,.55fr);grid-template-areas:"form motos mapa"}
+  #colMapa{position:sticky;top:84px}
  }
- #colForm{grid-area:form} #colFila{grid-area:fila} #colMapa{grid-area:mapa}
-
- /* Abas */
- .abas{display:flex;gap:4px;padding:0 16px;background:var(--escuro);overflow-x:auto}
- .abas button{background:none;color:#9ca3af;border-radius:8px 8px 0 0;padding:9px 16px;font-weight:600}
- .abas button.sel{background:var(--fundo);color:var(--texto)}
- .pagina{max-width:900px;margin:0 auto;padding:16px}
- #economiaHoje{margin:8px 16px 0;display:none;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;border-radius:var(--raio);
-               padding:8px 12px;font-weight:600;font-size:.92rem}
- section{background:var(--cartao);border-radius:var(--raio);padding:14px;margin-bottom:12px;border:1px solid var(--borda)}
+ #colForm{grid-area:form;display:grid;gap:16px;min-width:0} #colMotos{grid-area:motos;min-width:0} #colMapa{grid-area:mapa;min-width:0}
+ .pagina{max-width:920px;margin:0 auto;padding:24px}
+ section{background:var(--cartao);border-radius:var(--raio);padding:18px;margin-bottom:16px}
  section:last-child{margin-bottom:0}
- h2{margin:0 0 10px;font-size:1rem;display:flex;align-items:center;gap:8px}
- h2 .contador{background:#e5e7eb;border-radius:10px;padding:1px 9px;font-size:.8rem;font-weight:600}
+ #colForm section{margin:0}
+ h2{margin:0 0 14px;font-size:1rem;font-weight:600;display:flex;align-items:center;gap:8px}
+ h2 .contador{background:var(--campo);border-radius:999px;padding:1px 10px;font-size:.78rem;font-weight:500;color:var(--suave);white-space:nowrap}
+ h3{font-weight:600}
  .linha{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
  .linha input{flex:1;min-width:120px}
  .linha input[type=checkbox]{flex:none;min-width:0;width:auto}
- .ajuda{font-size:.82rem;color:var(--suave);margin-bottom:6px}
- .ok{color:#047857} .erro{color:#b91c1c}
+ .ajuda{font-size:.82rem;color:var(--suave);margin-bottom:6px;line-height:1.45}
+ summary.ajuda{padding:4px 0}
+ .ok{color:var(--ok)} .erro{color:var(--atraso);font-weight:500}
  ul{list-style:none;margin:0;padding:0}
- .sn{display:flex;align-items:center;gap:4px;font-size:.9rem;white-space:nowrap}
- .aviso-edicao{background:var(--amarelo);color:#92400e;padding:8px;border-radius:6px;margin-bottom:8px;font-weight:600}
- #candidatos li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--borda)}
- #mapaConfirma{height:300px;border-radius:8px;margin:8px 0}
- .pino{width:22px;height:22px;border-radius:50%;background:var(--vermelho);border:3px solid #fff;box-shadow:0 0 4px #000}
+ .sn{display:flex;align-items:center;gap:6px;font-size:.88rem;white-space:nowrap;color:var(--suave)}
+ .aviso-edicao{background:var(--atencao-fundo);color:var(--texto);padding:10px 12px;border-radius:var(--raio-campo);margin-bottom:10px;font-weight:500}
+ #candidatos li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--linha)}
+ #mapaConfirma{height:280px;border-radius:12px;margin:10px 0}
+ #rapido{font-size:1rem;padding:13px 14px;background:var(--campo)}
+ .pino{width:22px;height:22px;border-radius:50%;background:var(--atraso);border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5)}
 
- /* Pedidos */
- #alertaAtraso{display:none;background:var(--vermelho);color:#fff;font-weight:700;padding:10px 12px;border-radius:8px;margin-bottom:10px}
- .grupo{font-size:.8rem;font-weight:700;color:var(--suave);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 6px;display:flex;align-items:center;gap:6px}
+ /* Pedido: número numa placa com o anel da situação + informações ao lado */
+ #alertaAtraso{display:none;background:var(--atraso-fundo);color:var(--texto);font-weight:500;font-size:.88rem;padding:10px 12px;border-radius:var(--raio-campo);margin-bottom:12px}
+ .grupo{font-size:.76rem;font-weight:600;color:var(--suave);letter-spacing:.02em;margin:14px 0 8px;display:flex;align-items:center;gap:8px}
  .grupo:first-child{margin-top:0}
- .pedido{border:1px solid var(--borda);border-left:5px solid #cbd5e1;border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#fff}
- .pedido.pendente{border-left-color:#f97316}
- .pedido.atrasado{background:var(--vermelho-claro);border-color:#fecaca;border-left-color:var(--vermelho)}
- .pedido .topo{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
- .rotulo{font-weight:800;font-size:1.05rem;background:none;color:var(--texto);padding:0;border-radius:0}
- .rotulo:hover{text-decoration:underline}
- .hora{color:var(--suave);font-size:.85rem}
- .tag{font-size:.78rem;padding:2px 8px;border-radius:10px;background:#e5e7eb;white-space:nowrap;margin-left:auto}
- .tag.atrasado{background:var(--vermelho);color:#fff;font-weight:700}
- .endereco{margin:2px 0}
- .extra{font-size:.85rem;color:#555}
- .acoes{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center}
- .acoes select{padding:5px;max-width:140px}
- a.zap{padding:4px 9px;border-radius:6px;background:#16a34a;color:#fff;text-decoration:none;font-size:.85rem;display:inline-block;word-break:normal;white-space:nowrap;margin-top:4px}
+ .pedido{display:grid;grid-template-columns:52px minmax(0,1fr);column-gap:12px;align-items:start;background:var(--campo);border-radius:12px;
+         padding:10px;margin-bottom:8px}
+ .pedido>*{grid-column:2;min-width:0}
+ .pedido>.rotulo{grid-column:1;grid-row:1/span 8}
+ .pedido.atrasado{background:var(--atraso-fundo)}
+ .pedido .topo{display:flex;gap:6px 8px;align-items:center;flex-wrap:wrap;position:static}
+ .rotulo{min-height:44px;padding:0 4px;border-radius:10px;background:var(--cartao);color:var(--texto);font-weight:700;font-size:1rem;
+         box-shadow:inset 0 0 0 2px var(--ok);display:flex;align-items:center;justify-content:center}
+ .rotulo:hover{background:var(--fundo)}
+ .pedido.atencao .rotulo{box-shadow:inset 0 0 0 2px var(--atencao)}
+ .pedido.atrasado .rotulo{box-shadow:inset 0 0 0 2px var(--atraso);color:var(--atraso)}
+ .pedido.emrota .rotulo{box-shadow:inset 0 0 0 2px var(--cor-moto,var(--azul))}
+ .hora{color:var(--suave);font-size:.8rem}
+ .tag{font-size:.76rem;padding:2px 10px;border-radius:999px;background:var(--cartao);color:var(--suave);white-space:nowrap;margin-left:auto;font-weight:500}
+ .tag.atencao{background:var(--atencao-fundo);color:var(--atencao);font-weight:600}
+ .tag.atrasado{background:var(--atraso-fundo);color:var(--atraso);font-weight:600}
+ .endereco{margin:3px 0 1px;font-weight:500;overflow-wrap:anywhere}
+ .extra{font-size:.8rem;color:var(--suave);overflow-wrap:anywhere}
+ .acoes{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+ .acoes select{padding:5px 10px;max-width:150px;border-radius:999px;font-size:.84rem}
+ a.zap{padding:5px 12px 5px 10px;border-radius:999px;background:var(--sec);color:var(--texto);text-decoration:none;font-size:.82rem;font-weight:600;
+        display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+ a.zap::before{content:"";width:14px;height:14px;flex:none;background:currentColor;
+   -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5a6.5 6.5 0 0 0-5.6 9.8L1.5 14.5l3.3-.9A6.5 6.5 0 1 0 8 1.5z' fill='none' stroke='%23000' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
+           mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5a6.5 6.5 0 0 0-5.6 9.8L1.5 14.5l3.3-.9A6.5 6.5 0 1 0 8 1.5z' fill='none' stroke='%23000' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat}
+ a.zap:hover{background:var(--sec-hover)}
  .bolinha{display:inline-block;width:10px;height:10px;border-radius:50%;flex-shrink:0}
  .vazio{color:var(--suave);padding:6px 0}
+ .dica{font-size:.8rem;margin-top:6px;padding:4px 10px;border-radius:8px;display:inline-block;font-weight:500}
+ .dica.aguarda{background:var(--atencao-fundo);color:var(--texto)}
+ .dica.junto{background:var(--azul-fundo);color:var(--texto)}
+ .dica.longe{background:var(--cartao);color:var(--texto)}
 
- /* Mapa da operação */
- #mapaOp{height:calc(100vh - 230px);min-height:340px;border-radius:8px}
- @media (max-width:1279px){ #mapaOp{height:420px} }
- .legenda{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:.82rem;color:var(--suave);align-items:center}
- .legenda span{display:flex;align-items:center;gap:4px}
- #chipsMoto{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
- .chip{background:#f9fafb;border:1px solid var(--borda);color:var(--texto);border-radius:18px;padding:5px 10px;font-size:.85rem;
-       display:flex;align-items:center;gap:6px;text-align:left;white-space:normal}
- .chip:hover{border-color:#9ca3af}
- .chip .st{color:var(--suave);font-size:.78rem}
- .infoMoto{min-width:190px} .infoMoto ol{margin:4px 0 0;padding-left:18px} .infoMoto .st{color:#6b7280}
- .pin{min-width:26px;height:26px;padding:0 5px;border-radius:13px;color:#fff;font-weight:700;font-size:12px;
-      display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45)}
- .pin.rest{background:var(--verde);border-radius:6px}
- .pin.pend{background:#f97316}
- .pin.pend.atrasado{background:var(--vermelho)}
- .pin.atrasado{animation:pisca 1s infinite}
- .pin.moto{border-radius:6px;font-size:13px;box-shadow:0 0 0 3px rgba(255,255,255,.7),0 1px 6px rgba(0,0,0,.5)}
- @keyframes pisca{50%{transform:scale(1.25);box-shadow:0 0 0 6px rgba(220,38,38,.35)}}
+ /* Quadro dos motoboys: uma coluna por motoboy, quem fica livre primeiro à esquerda */
+ #colMotos h2{margin-bottom:12px}
+ /* Sempre uma linha só: as colunas encolhem até 150px e, se ainda não couber, o quadro rola para o lado */
+ .quadro{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(150px,1fr);gap:12px;align-items:start;overflow-x:auto;
+         scroll-snap-type:x proximity;padding-bottom:6px}
+ .quadro>*{scroll-snap-align:start}
+ @media (max-width:600px){ .quadro{grid-auto-columns:minmax(220px,78%)} }
+ .colMoto{background:var(--cartao);border-radius:var(--raio);padding:12px;box-shadow:inset 0 3px 0 var(--cor-moto);display:flex;flex-direction:column;gap:10px;min-height:260px;
+          --cor-moto:var(--azul)}
+ .colMoto.fora{opacity:.7}
+ .cabMoto{display:flex;flex-direction:column;gap:2px;align-items:stretch;text-align:left;background:none;color:var(--texto);padding:0;border-radius:8px;white-space:normal;font-weight:400}
+ .cabMoto:hover{background:none}
+ .cabMoto:hover .nomeCol{text-decoration:underline;text-underline-offset:3px}
+ .nomeCol{display:flex;align-items:center;gap:8px;font-weight:600;font-size:.98rem}
+ .nomeCol .bolinha{background:var(--cor-moto)}
+ .stMoto{font-size:.78rem;color:var(--suave)}
+ .livreEm{font-size:.76rem;color:var(--suave);margin-top:4px}
+ .livreEm small{display:block;font-size:.72rem;color:var(--suave)}
+ .livreEm b{display:block;font-size:1.3rem;font-weight:700;color:var(--texto);line-height:1.2}
+ .livreEm.agora b{color:var(--azul-claro)}
+ .tempoLivre{height:6px;border-radius:999px;background:var(--campo);overflow:hidden}
+ .tempoLivre i{display:block;height:100%;border-radius:999px;background:var(--cor-moto);transition:width .4s cubic-bezier(.16,1,.3,1)}
+ /* Na coluna o cartão é estreito: o número sobe para a linha de cima */
+ .colMoto .pedido{display:flex;flex-direction:column;gap:2px;padding:10px;margin:0}
+ .colMoto .pedido>.rotulo{align-self:flex-start;min-height:32px;padding:0 10px;font-size:.88rem;border-radius:8px;margin-bottom:4px}
+ .colMoto .endereco{font-size:.86rem}
+ .colMoto .tag{margin-left:0}
+ .colMoto .acoes{margin-top:6px}
+ .vagaMoto{flex:1;min-height:72px;border-radius:12px;border:1px dashed var(--borda);display:grid;place-items:center;text-align:center;
+           color:var(--suave);font-size:.82rem;padding:10px}
+ .rodapeMoto{font-size:.76rem;color:var(--suave);margin-top:auto}
+ .semMotos{background:var(--cartao);border-radius:var(--raio);padding:40px 24px;color:var(--suave);text-align:center;
+           border:1px dashed var(--borda);min-height:220px;display:grid;place-items:center}
+
+ /* Mapa da operação, escuro como o do login */
+ #mapaOp{height:calc(100vh - 210px);min-height:360px;border-radius:12px;background:var(--campo)}
+ @media (max-width:1279px){ #mapaOp{height:440px} }
+ .leaflet-container{font-family:var(--fonte);background:var(--campo)}
+ #mapaOp .leaflet-tile-pane,#mapaConfirma .leaflet-tile-pane,.mapaEscolha .leaflet-tile-pane{filter:invert(1) hue-rotate(200deg) brightness(.82) contrast(.88) saturate(.55)}
+ .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--cartao);color:var(--texto);box-shadow:0 12px 28px rgba(0,0,0,.45)}
+ .leaflet-popup-content{font-size:13px;line-height:1.45}
+ .leaflet-container a.leaflet-popup-close-button{color:var(--suave)}
+ .leaflet-control-attribution{background:rgba(43,42,55,.85)!important;color:var(--suave)!important}
+ .leaflet-control-attribution a{color:var(--azul-claro)!important}
+ .leaflet-bar a{background:var(--cartao);color:var(--texto);border-bottom-color:var(--linha)}
+ .leaflet-bar a:hover{background:var(--campo)}
+ .legenda{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:12px;font-size:.8rem;color:var(--suave);align-items:center}
+ .legenda span{display:flex;align-items:center;gap:6px}
+ .infoMoto{min-width:190px} .infoMoto ol{margin:4px 0 0;padding-left:18px} .infoMoto .st,.chip .st{color:var(--suave)}
+ .pin{min-width:28px;height:26px;padding:0 6px;border-radius:13px;color:var(--fundo);font-weight:700;font-size:12px;line-height:1;
+      display:flex;align-items:center;justify-content:center;border:2px solid var(--fundo);box-shadow:0 2px 6px rgba(0,0,0,.5)}
+ .pin.rest{background:var(--azul);color:#fff;border-radius:8px;border-color:#fff}
+ .pin.pend{background:var(--ok)}
+ .pin.pend.atencao{background:var(--atencao)}
+ .pin.pend.atrasado{background:var(--atraso)}
+ .pin.atrasado{animation:pisca 1.2s ease-in-out infinite}
+ .pin.moto{border-radius:8px;font-size:11px;border-color:#fff}
+ @keyframes pisca{50%{transform:scale(1.2);box-shadow:0 0 0 6px rgba(240,113,120,.35)}}
+ @media (prefers-reduced-motion:reduce){ .pin.atrasado{animation:none} .tempoLivre i{transition:none} }
 
  /* Motoboys */
- #listaMoto li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--borda);flex-wrap:wrap}
+ #listaMoto li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 0;border-top:1px solid var(--linha);flex-wrap:wrap}
  #listaMoto li:first-child{border-top:0}
- .nomeMoto{display:flex;align-items:center;gap:6px;font-weight:600}
- .detalheMoto{font-size:.82rem;color:var(--suave);font-weight:400}
- .gps{font-size:.75rem;background:#d1fae5;color:#065f46;padding:1px 6px;border-radius:8px;font-weight:600}
+ .nomeMoto{display:flex;align-items:center;gap:8px;font-weight:600;flex-wrap:wrap}
+ .detalheMoto{font-size:.8rem;color:var(--suave);font-weight:400}
+ .gps{font-size:.72rem;background:var(--azul-fundo);color:var(--azul-claro);padding:1px 8px;border-radius:999px;font-weight:600}
  #msgMoto{word-break:break-all}
 
- /* Situação dos pedidos (verde / amarelo / vermelho) */
- .cartao.verde-c{border-color:#a7f3d0} .cartao.verde-c .num{color:var(--verde)}
- .cartao.amarelo-c{border-color:#fde68a} .cartao.amarelo-c .num{color:#b45309}
- .cartao.amarelo-c.alerta{background:var(--amarelo);color:#92400e;border-color:#fcd34d}
- .pedido.atencao{border-left-color:#f59e0b;background:#fffbeb}
- .tag.atencao{background:#fde68a;color:#92400e;font-weight:700}
- .dica{font-size:.82rem;margin-top:4px;padding:4px 8px;border-radius:6px;display:inline-block}
- .dica.aguarda{background:#fef3c7;color:#92400e}
- .dica.junto{background:#dbeafe;color:#1e40af}
- .dica.longe{background:#f3f4f6;color:#374151}
-
- /* Modo de despacho */
- #barraModo{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 16px 0}
- .seg{display:inline-flex;border:1px solid #cfd4dc;border-radius:8px;overflow:hidden;background:#fff}
- .seg button{background:#fff;color:var(--texto);border-radius:0;padding:6px 12px;border-right:1px solid #e5e7eb}
- .seg button:last-child{border-right:0}
- .seg button.sel{background:var(--escuro);color:#fff}
- #infoAuto{font-size:.85rem;color:var(--suave)}
- #regras{display:none;margin:8px 16px 0;background:#fff;border:1px solid var(--borda);border-radius:var(--raio);padding:12px}
- #regras .regra{padding:8px 0;border-top:1px solid var(--borda)}
- #regras .regra label{font-weight:600}
- #regras .regra input{width:72px;padding:5px 6px;margin:0 4px;text-align:center}
- #regras .explica{font-size:.85rem;color:#065f46;margin-top:3px}
- #regras .explica::before{content:"💡 "}
-
- /* Sugestão (modo assistido) */
- #sugestao{display:none;margin:10px 16px 0;background:#fff;border:2px solid var(--verde);border-radius:var(--raio);padding:12px}
- #sugestao h3{margin:0 0 8px;font-size:1rem}
- .sug-moto{border:1px solid var(--borda);border-radius:8px;padding:8px 10px;margin-bottom:8px}
- .sug-moto .quem{font-weight:700;display:flex;align-items:center;gap:6px}
- .sug-viagem{font-size:.9rem;margin:4px 0 0 16px}
- .sug-viagem .antigo{color:var(--suave)}
- .sug-numeros{font-size:.9rem;color:var(--suave);margin:2px 0 0 16px}
- .porque{margin:0 0 0 16px;font-size:.85rem;color:#065f46}
- .porque li::before{content:"✓ ";font-weight:700}
- .sug-moto.trocado{border-color:#f59e0b;background:#fffbeb}
- .economia.sem{background:var(--amarelo);color:#92400e}
- .economia{background:#ecfdf5;color:#065f46;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-weight:600}
-
- /* Estatísticas */
- .estat{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin:8px 0}
- .estat .cartao .num{font-size:1.2rem}
- .var{font-size:.75rem;font-weight:600}
- .var.bom{color:var(--verde)} .var.ruim{color:var(--vermelho)}
+ /* Relatórios */
+ .estat{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:8px 0}
+ .estat .cartao{background:var(--campo)}
+ .estat .cartao .num{font-size:1.25rem}
+ .var{font-size:.74rem;font-weight:600}
+ .var.bom{color:var(--ok)} .var.ruim{color:var(--atraso)}
  table.motos{width:100%;border-collapse:collapse;font-size:.85rem}
- table.motos th,table.motos td{padding:5px 4px;border-top:1px solid var(--borda);text-align:right}
+ table.motos th,table.motos td{padding:9px 6px;border-top:1px solid var(--linha);text-align:right}
+ table.motos th{font-size:.76rem;color:var(--suave);font-weight:500}
  table.motos th:first-child,table.motos td:first-child{text-align:left}
  .tabela{overflow-x:auto}
- #qrMoto img{display:block;margin:8px 0;image-rendering:pixelated}
+ #qrMoto img{display:block;margin:10px 0;image-rendering:pixelated;background:#fff;padding:10px;border-radius:12px}
+
+ @media (max-width:600px){
+  header{padding:10px 16px} .faixa,#barraModo{padding-left:16px;padding-right:16px} .grade{padding:12px 16px 24px}
+  #msgDespacho,#regras,#sugestao,#economiaHoje{margin-left:16px;margin-right:16px}
+  .cartoes{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(92px,1fr);overflow-x:auto;scrollbar-width:none}
+  .cartao{padding:8px 10px} .cartao .num{font-size:1.15rem} .cartao .rot{white-space:nowrap}
+  #despachar{flex:1 1 100%}
+  header h1,#relogio{display:none}
+  .abas{order:3;width:100%} .abas button{padding:8px 12px}
+  button.mini,.acoes select,a.zap{min-height:40px} a.zap{display:inline-flex;align-items:center}
+  .pagina{padding:16px}
+ }
  /* Login (entregaAI): painel escuro com o mapa de uma rota, sobre a cidade à noite.
     As variáveis são redefinidas só dentro de #telaLogin; o resto do painel não muda. */
  #telaLogin{
@@ -288,7 +390,7 @@
  }
  @media (max-width:420px){ .lg-pagina{padding:0} .lg-painel{border-radius:0;min-height:100svh} }
  @media (prefers-reduced-motion:reduce){ #telaLogin *{transition-duration:.01ms!important;animation-duration:.01ms!important} }
- #quemSou{color:#d1d5db;font-size:.88rem}
+ #quemSou{color:var(--suave);font-size:.86rem}
  body.funcionario .so-gestor{display:none !important}
  body:not(.admin) .so-admin{display:none !important}
  #linkConvite{word-break:break-all;margin-top:8px}
@@ -450,20 +552,25 @@
 </div>
 <div class="topo">
 <header>
- <h1 id="tituloPainel">Painel do restaurante</h1>
+ <span class="marca">
+  <span class="marca__bola" aria-hidden="true">
+   <svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 10.5 L6 6.5 L8.5 9 L12 3.5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </span>
+  <span class="marca__nome">entrega<b>AI</b><span class="ponto">.</span></span>
+ </span>
+ <nav class="abas" id="abas">
+  <button data-aba="abaOperacao" class="sel">Operação</button>
+  <button data-aba="abaMotoboys">Motoboys</button>
+  <button data-aba="abaRelatorios">Relatórios</button>
+  <button data-aba="abaConta">Conta</button>
+ </nav>
  <span class="espaco"></span>
+ <h1 id="tituloPainel">Painel do restaurante</h1>
  <select id="escolhaRest" class="so-admin" title="Restaurante que você está vendo"></select>
  <span id="relogio"></span>
  <span id="quemSou"></span>
  <button id="sair" class="claro mini" style="display:none">Sair</button>
 </header>
-
-<nav class="abas" id="abas">
- <button data-aba="abaOperacao" class="sel">🏠 Operação</button>
- <button data-aba="abaMotoboys">🛵 Motoboys</button>
- <button data-aba="abaRelatorios">📊 Relatórios</button>
- <button data-aba="abaConta">👤 Conta</button>
-</nav>
 </div>
 
 <div id="abaOperacao" class="aba">
@@ -471,13 +578,13 @@
  <div class="cartoes">
   <div class="cartao"><div class="num" id="rPendentes">—</div><div class="rot">Na fila</div></div>
   <div class="cartao"><div class="num" id="rEmRota">—</div><div class="rot">Em rota</div></div>
-  <div class="cartao verde-c"><div class="num" id="rNoPrazo">—</div><div class="rot">🟢 No prazo</div></div>
-  <div class="cartao amarelo-c" id="cAtencao"><div class="num" id="rAtencao">—</div><div class="rot">🟡 Atenção</div></div>
-  <div class="cartao" id="cAtrasados"><div class="num" id="rAtrasados">—</div><div class="rot">🔴 Atrasados</div></div>
+  <div class="cartao verde-c"><div class="num" id="rNoPrazo">—</div><div class="rot"><i style="background:var(--ok)"></i>No prazo</div></div>
+  <div class="cartao amarelo-c" id="cAtencao"><div class="num" id="rAtencao">—</div><div class="rot"><i style="background:var(--atencao)"></i>Atenção</div></div>
+  <div class="cartao" id="cAtrasados"><div class="num" id="rAtrasados">—</div><div class="rot"><i style="background:var(--atraso)"></i>Atrasados</div></div>
   <div class="cartao"><div class="num" id="rEntregues">—</div><div class="rot">Entregues hoje</div></div>
   <div class="cartao"><div class="num" id="rTempo">—</div><div class="rot">Tempo médio</div></div>
  </div>
- <button id="despachar">🧠 Despachar</button>
+ <button id="despachar">Despachar</button>
 </div>
 <div id="barraModo">
  <span class="ajuda" style="margin:0">Despacho:</span>
@@ -489,8 +596,8 @@
  <span id="infoAuto"></span>
 </div>
 <div id="regras">
- <h3 style="margin:0 0 4px">⚙️ Como quero que o despacho funcione</h3>
- <div class="ajuda">💡 O sistema tenta juntar pedidos próximos, mas nunca deixa um pedido esperar mais que o limite que você definir.</div>
+ <h2 style="margin:0 0 4px">Como quero que o despacho funcione</h2>
+ <div class="ajuda">O sistema tenta juntar pedidos próximos, mas nunca deixa um pedido esperar mais que o limite que você definir.</div>
  <div class="regra">
   <label>Agrupar até <input id="rgMaxParadas" type="number" min="1" max="10"> pedidos por viagem</label>
   <div class="explica" id="exMaxParadas"></div>
@@ -528,11 +635,11 @@
    <h2 id="tituloPedido">Novo pedido</h2>
    <div id="avisoEdicao" class="aviso-edicao" style="display:none"></div>
    <div class="linha">
-    <input id="rapido" placeholder="📍 Cole ou digite o endereço do cliente (ex.: Rua São Paulo, 123 - Centro)" autocomplete="off" style="font-size:1.02rem;padding:10px">
+    <input id="rapido" placeholder="Endereço do cliente" title="Cole ou digite o endereço do cliente (ex.: Rua São Paulo, 123 - Centro)" aria-label="Endereço do cliente" autocomplete="off">
    </div>
    <div class="linha">
-    <input id="cliente" placeholder="Nome do cliente (opcional)" maxlength="80">
-    <input id="telefone" placeholder="Telefone (opcional)" inputmode="tel" maxlength="16">
+    <input id="cliente" placeholder="Nome" aria-label="Nome do cliente (opcional)" maxlength="80">
+    <input id="telefone" placeholder="Telefone" aria-label="Telefone (opcional)" inputmode="tel" maxlength="16">
    </div>
    <div class="linha">
     <button id="buscar" style="flex:1">Buscar</button>
@@ -568,22 +675,22 @@
    </div>
    <ul id="candidatos"></ul>
   </section>
- </div>
-
-
- <div id="colFila">
-  <section>
-   <h2>Pedidos</h2>
+  <section id="colFila">
    <div id="alertaAtraso"></div>
    <div id="fila"><div class="vazio">Carregando...</div></div>
+   <div class="saiu" id="sairam"></div>
   </section>
+ </div>
+
+ <div id="colMotos">
+  <h2>Motoboys <span class="contador" id="contQuadro"></span><span class="ajuda" style="margin:0 0 0 auto;font-weight:400">quem fica livre primeiro, à esquerda</span></h2>
+  <div class="quadro" id="quadroMotos"></div>
  </div>
 
  <div id="colMapa">
   <section>
    <h2>Mapa da operação <span class="espaco" style="flex:1"></span><button id="centralizar" class="claro mini">Centralizar</button></h2>
    <div id="mapaOp"></div>
-   <div id="chipsMoto"></div>
    <div class="legenda" id="legenda"></div>
   </section>
  </div>
@@ -602,7 +709,7 @@
     <input id="motoTel" placeholder="WhatsApp (31) 99999-9999" inputmode="tel" maxlength="16">
    </div>
    <div class="linha">
-    <select id="motoTipo" style="flex:1"><option value="proprio">🛵 Próprio</option><option value="terceirizado">🛵 Terceirizado</option></select>
+    <select id="motoTipo" style="flex:1"><option value="proprio">Próprio</option><option value="terceirizado">Terceirizado</option></select>
     <button id="salvarMoto">Salvar</button>
    </div>
    <details><summary class="ajuda" style="cursor:pointer">Código de acesso (opcional)</summary>
@@ -622,7 +729,7 @@
 <div id="abaConta" class="aba" style="display:none">
  <div class="pagina">
   <section class="so-admin">
-   <h2>🏪 Restaurantes <span class="contador" id="contRest"></span></h2>
+   <h2>Restaurantes <span class="contador" id="contRest"></span></h2>
    <div class="ajuda">Todos os restaurantes do sistema e o movimento de hoje. "Abrir" mostra o painel daquele restaurante
     (você também pode trocar no topo da página).</div>
    <div class="tabela"><table class="motos" id="listaRest"></table></div>
@@ -632,12 +739,12 @@
    <div id="msgRestaurantes"></div>
   </section>
   <section class="so-gestor" id="secRestaurante">
-   <h2>🏪 Meu restaurante</h2>
+   <h2>Meu restaurante</h2>
    <div class="ajuda">O endereço é de onde os motoboys saem e para onde voltam. Só o dono muda estes dados.</div>
    <div class="linha"><input id="rsNome" placeholder="Nome do restaurante" maxlength="80"></div>
    <div class="linha"><input id="rsEnd" placeholder="Endereço (ex.: Rua São Paulo, 123 - Centro)" maxlength="200">
     <input id="rsCidade" placeholder="Cidade, UF" maxlength="80" style="flex:0 1 180px"></div>
-   <div class="linha"><button id="rsBuscar" class="claro">📍 Achar no mapa</button><button id="rsSalvar" class="verde">Salvar</button></div>
+   <div class="linha"><button id="rsBuscar" class="claro">Achar no mapa</button><button id="rsSalvar" class="verde">Salvar</button></div>
    <div id="rsMapa" class="mapaEscolha"></div>
    <div class="ajuda">Confira o pino: arraste ou clique no mapa até a porta do restaurante.</div>
    <div id="msgRest"></div>
@@ -666,7 +773,7 @@
     <button id="btEquipe">Adicionar</button>
    </div>
    <div class="ajuda">Passe a senha inicial para a pessoa e peça para ela trocar em "Minha senha".</div>
-   <h2 style="margin-top:14px">🔗 Convidar por link</h2>
+   <h2 style="margin-top:14px">Convidar por link</h2>
    <div class="ajuda">Mais fácil: gere um link e mande para a pessoa. Ela mesma cria o e-mail e a senha.
     O link vale <strong>uma vez só</strong> e vence em 7 dias.</div>
    <div class="linha">
@@ -910,7 +1017,7 @@ async function aposEntrar() {
   $("telaLogin").style.display = "none"; $("lgSenha").value = ""; $("cvSenha").value = ""; $("adChave").value = "";
   document.body.classList.toggle("funcionario", eu.papel === "funcionario");
   document.body.classList.toggle("admin", eu.papel === "admin");
-  $("quemSou").textContent = "👤 " + eu.nome + (eu.papel === "dono" ? " (dono)" : eu.papel === "admin" ? "" : " (funcionário)");
+  $("quemSou").textContent = eu.nome + (eu.papel === "dono" ? " (dono)" : eu.papel === "admin" ? "" : " (funcionário)");
   $("sair").style.display = "inline-block";
   $("contaInfo").textContent = eu.tipo === "admin" ? "Você entrou como administrador do sistema (com a chave). O administrador não tem senha."
                                                    : "Conectado como " + eu.email + (eu.restaurante ? " · " + eu.restaurante.nome : "") + ".";
@@ -933,11 +1040,12 @@ function aplicarRestaurante(r) {
   restauranteAtual = r;
   $("secRestaurante").style.display = $("secEquipe").style.display = r ? "" : "none";
   if (!r) { $("tituloPainel").textContent = "Painel do restaurante"; return; }
+  pedidosAtuais = []; sairam.length = 0;  // outro restaurante: os pedidos do anterior não "saíram"
   CONFIG.restaurante = {lat: r.lat, lng: r.lng};
   CONFIG.cidade = r.cidade;
   $("cidade").value = r.cidade;
   restauranteNome = r.nome;
-  $("tituloPainel").textContent = "🏪 " + r.nome;
+  $("tituloPainel").textContent = r.nome;
   document.title = r.nome + " · Despacho";
   $("rsNome").value = r.nome; $("rsEnd").value = r.endereco; $("rsCidade").value = r.cidade;
   pontoRest = {lat: r.lat, lng: r.lng};
@@ -1241,11 +1349,11 @@ $("buscar").onclick = async () => {
     } else {
       // Já mostra o primeiro resultado no mapa: na maioria das vezes é só confirmar.
       dizer($("msgBusca"), "");
-      mostrarConfirmacao(r.resultados[0], "📍 " + r.resultados[0].rotulo);
+      mostrarConfirmacao(r.resultados[0], r.resultados[0].rotulo);
       if (r.resultados.length > 1) {
         $("candidatos").append(el("li", {className: "ajuda", textContent: "Não é esse? Outros resultados:"}));
         r.resultados.slice(1).forEach((c) => {
-          const b = el("button", {textContent: "Usar este", className: "mini claro", onclick: () => mostrarConfirmacao(c, "📍 " + c.rotulo)});
+          const b = el("button", {textContent: "Usar este", className: "mini claro", onclick: () => mostrarConfirmacao(c, c.rotulo)});
           $("candidatos").append(el("li", {}, el("span", {textContent: c.rotulo}), b));
         });
       }
@@ -1299,11 +1407,15 @@ $("confirmar").onclick = async () => {
 // ---------------------------------------------------------------------
 // Cores dos motoboys (as mesmas na lista de pedidos, na lista de motoboys e no mapa)
 // ---------------------------------------------------------------------
-const PALETA = ["#2563eb", "#9333ea", "#ea580c", "#0891b2", "#db2777", "#65a30d", "#ca8a04", "#4f46e5", "#0f766e", "#7c2d12"];
+// Claras o bastante para o fundo escuro e a mais de ~30° de matiz do verde-água, âmbar e coral
+// da situação e do azul da marca (que é o do restaurante no mapa).
+// O rosa (perto do coral) e o branco (que some no mapa) só entram depois do 6º motoboy.
+// Os 4 primeiros têm matizes bem separados entre si (violeta, limão, magenta, índigo).
+const PALETA = ["#B48CFF", "#C6E36B", "#FF8AE2", "#6F7BFF", "#E8F59A", "#D9A8FF", "#EDE6D6"];
 let listaMotoboys = [];
 function corDe(id) {
   const i = listaMotoboys.findIndex((m) => m.id === id);
-  return i < 0 ? "#6b7280" : PALETA[i % PALETA.length];
+  return i < 0 ? "#777C8D" : PALETA[i % PALETA.length];
 }
 
 // ---------------------------------------------------------------------
@@ -1316,25 +1428,26 @@ const escolhas = {};               // pedido -> motoboy escolhido no seletor (so
 
 function cartaoPedido(p) {
   const pendente = p.status === "pendente";
-  const caixa = el("div", {className: "pedido" + (pendente ? " pendente" : "") + (p.situacao === "atencao" ? " atencao" : "") + (p.atrasado ? " atrasado" : "")});
-  if (!pendente && p.situacao === "ok") caixa.style.borderLeftColor = corDe(p.motoboy_id);
+  const caixa = el("div", {className: "pedido" + (pendente ? " pendente" : " emrota") + (p.situacao === "atencao" ? " atencao" : "") + (p.atrasado ? " atrasado" : "")});
+  if (!pendente && p.situacao === "ok") caixa.style.setProperty("--cor-moto", corDe(p.motoboy_id));
 
   const tag = el("span", {className: "tag" + (p.atrasado ? " atrasado" : p.situacao === "atencao" ? " atencao" : "")});
-  if (pendente) tag.textContent = (p.atrasado ? "🔴 esperando há " : p.situacao === "atencao" ? "🟡 na fila há " : "na fila há ") + (p.minutos || 0) + " min";
-  else tag.textContent = "parada " + p.ordem + (p.saiu ? " · saiu" : "") + (p.situacao !== "ok" ? " · em rota há " + p.minutos + " min" : "");
+  if (pendente) tag.textContent = (p.atrasado ? "esperando há " : p.situacao === "atencao" ? "na fila há " : "na fila há ") + (p.minutos || 0) + " min";
+  else tag.textContent = "parada " + p.ordem + (p.situacao !== "ok" ? " · há " + p.minutos + " min" : p.saiu ? " · saiu" : "");
+  if (!pendente && p.situacao !== "ok") tag.title = "Em rota há " + p.minutos + " min";
   const rot = el("button", {className: "rotulo", textContent: p.rotulo, title: "Ver no mapa", onclick: () => focarNoMapa(p.id)});
-  caixa.append(el("div", {className: "topo"}, rot, el("span", {className: "hora", textContent: p.hora ? "feito às " + p.hora : ""}), tag));
+  caixa.append(rot, el("div", {className: "topo"}, el("span", {className: "hora", textContent: p.hora ? "feito às " + p.hora : ""}), tag));
   caixa.append(el("div", {className: "endereco", textContent: p.endereco}));
-  const extras = [p.cliente ? "👤 " + p.cliente : "", p.complemento, p.referencia ? "Ref.: " + p.referencia : "", p.telefone ? "Tel.: " + p.telefone : ""].filter(Boolean).join(" · ");
+  const extras = [p.cliente ? p.cliente : "", p.complemento, p.referencia ? "Ref.: " + p.referencia : "", p.telefone ? "Tel.: " + p.telefone : ""].filter(Boolean).join(" · ");
   if (extras) caixa.append(el("div", {className: "extra", textContent: extras}));
   if (pendente) {
     // Dicas de agrupamento: ajudam a decidir se vale esperar ou mandar agora.
     if (p.agrupar_com && p.agrupar_com.length)
-      caixa.append(el("div", {className: "dica junto", textContent: "🟢 Pode ir junto com " + p.agrupar_com.join(", ")}));
+      caixa.append(el("div", {className: "dica junto", textContent: "Pode ir junto com " + p.agrupar_com.join(", ")}));
     else if (p.aguardando)
-      caixa.append(el("div", {className: "dica aguarda", textContent: "🟡 Aguardando agrupamento: sozinho na região" + (modoAtual === "automatico" ? ", espera um parceiro antes de sair" : "")}));
+      caixa.append(el("div", {className: "dica aguarda", textContent: "Aguardando agrupamento: sozinho na região" + (modoAtual === "automatico" ? ", espera um parceiro antes de sair" : "")}));
     if (p.longe)
-      caixa.append(el("div", {className: "dica longe", textContent: "📍 " + p.km + " km do restaurante: o automático não manda, escolha um motoboy"}));
+      caixa.append(el("div", {className: "dica longe", textContent: p.km + " km do restaurante: o automático não manda, escolha um motoboy"}));
   }
 
   const acoes = el("div", {className: "acoes"});
@@ -1365,7 +1478,9 @@ function cartaoPedido(p) {
                             href: "https://wa.me/55" + digitos + "?text=" + encodeURIComponent(texto)}));
     }
   }
-  const cx = el("button", {textContent: "Cancelar pedido", className: "perigo mini"});
+  // Na coluna do motoboy o cartão é estreito: "Cancelar" cabe numa linha; o nome completo fica no title.
+  const cx = el("button", {textContent: pendente ? "Cancelar pedido" : "Cancelar", title: "Cancelar pedido " + p.rotulo,
+                           className: "perigo mini"});
   cx.onclick = async () => {
     const emRota = p.status === "despachado";
     if (!confirm("Cancelar o pedido " + p.rotulo + "?\n" + p.endereco + (emRota ? "\n\nEle já está com " + p.motoboy_id + ": a parada sai da rota dele." : ""))) return;
@@ -1387,35 +1502,39 @@ async function carregarFila(automatico) {
   try {
     const r = await api("/pedidos");
     restauranteNome = r.restaurante_nome || "";
+    avisarQueSairam(r.pedidos);
     pedidosAtuais = r.pedidos;
     mostrarModo(r.modo, r.automatico);
     avisarAtrasos(r.pedidos);
     desenharMapa();
     const foco = document.activeElement;
     if (automatico && foco && foco.tagName === "SELECT" && $("fila").contains(foco)) return;
-    const assinatura = JSON.stringify([r.pedidos, r.modo, listaMotoboys.map((m) => [m.id, m.ativo])]);
+    const assinatura = JSON.stringify([r.pedidos.filter((p) => p.status === "pendente"), r.modo, listaMotoboys.map((m) => [m.id, m.ativo])]);
     if (automatico && assinatura === ultimaFila) return;
     ultimaFila = assinatura;
 
+    // Só a fila fica aqui; os pedidos em rota aparecem na coluna de cada motoboy (desenharQuadro).
     const fila = $("fila"); fila.innerHTML = "";
     const pendentes = r.pedidos.filter((p) => p.status === "pendente");
-    const emRota = r.pedidos.filter((p) => p.status !== "pendente");
-
-    fila.append(el("div", {className: "grupo", textContent: "Na fila (" + pendentes.length + ")"}));
+    fila.append(el("h2", {}, document.createTextNode("Na fila"), el("span", {className: "contador", textContent: String(pendentes.length)})));
     if (!pendentes.length) fila.append(el("div", {className: "vazio", textContent: "Nenhum pedido esperando."}));
     // Os mais atrasados primeiro.
     pendentes.sort((a, b) => (b.minutos || 0) - (a.minutos || 0)).forEach((p) => fila.append(cartaoPedido(p)));
-
-    // Em rota: agrupado por motoboy, na ordem das paradas.
-    const porMoto = {};
-    emRota.forEach((p) => (porMoto[p.motoboy_id] = porMoto[p.motoboy_id] || []).push(p));
-    Object.keys(porMoto).sort().forEach((m) => {
-      const titulo = el("div", {className: "grupo"}, el("span", {className: "bolinha", style: "background:" + corDe(m)}),
-                        document.createTextNode(m + " — em rota (" + porMoto[m].length + ")"));
-      fila.append(titulo);
-      porMoto[m].sort((a, b) => (a.ordem || 0) - (b.ordem || 0)).forEach((p) => fila.append(cartaoPedido(p)));
-    });
   } catch (err) { dizer($("msgDespacho"), err.message, "erro"); }
+}
+
+// Nenhum pedido some sem aviso: quando um pedido que estava na tela deixa de vir na lista
+// (entregue ou cancelado), ele aparece em "Saíram da operação" com a hora, os 6 mais recentes.
+const sairam = [];
+function avisarQueSairam(novos) {
+  const ids = new Set(novos.map((p) => p.id));
+  const hora = new Date().toLocaleTimeString("pt-BR", {hour: "2-digit", minute: "2-digit"});
+  pedidosAtuais.filter((p) => !ids.has(p.id)).forEach((p) => sairam.unshift({rotulo: p.rotulo, hora: hora, com: p.motoboy_id}));
+  sairam.splice(6);
+  const caixa = $("sairam"); caixa.innerHTML = "";
+  if (!sairam.length) return;
+  caixa.append(document.createTextNode("Saíram da operação (entregues ou cancelados):"));
+  sairam.forEach((s) => caixa.append(el("span", {textContent: s.rotulo + " · " + s.hora + (s.com ? " · " + s.com : "")})));
 }
 
 // Alerta de atraso: faixa vermelha, cartão "Atrasados" e contador no título da aba.
@@ -1428,14 +1547,14 @@ function avisarAtrasos(pedidos) {
   if (emRota) avisos.push(emRota + " pedido(s) em rota há mais de " + CONFIG.rotaAtrasoMin + " min sem entregar");
   const faixa = $("alertaAtraso");
   faixa.style.display = avisos.length ? "block" : "none";
-  faixa.textContent = avisos.length ? "⚠ " + avisos.join(" · ") + "." : "";
+  faixa.textContent = avisos.length ? avisos.join(" · ") + "." : "";
   const atencao = pedidos.filter((p) => p.situacao === "atencao").length;
   $("rAtrasados").textContent = atrasados.length;
   $("rAtencao").textContent = atencao;
   $("rNoPrazo").textContent = pedidos.length - atrasados.length - atencao;
   $("cAtrasados").classList.toggle("alerta", atrasados.length > 0);
   $("cAtencao").classList.toggle("alerta", atencao > 0);
-  document.title = atrasados.length ? "(" + atrasados.length + ") ⚠ Atrasados — Painel" : "Painel do restaurante";
+  document.title = atrasados.length ? "(" + atrasados.length + ") Atrasados · Painel" : "Painel do restaurante";
 
 }
 
@@ -1461,23 +1580,26 @@ async function verSugestao() {
     dizer($("msgDespacho"), "");
     if (r.mensagem) { caixa.style.display = "none"; dizer($("msgDespacho"), r.mensagem, "erro"); return; }
     caixa.innerHTML = "";
-    caixa.append(el("h3", {textContent: "🧠 Sugestão do sistema — " + r.pendentes + (r.pendentes === 1 ? " pedido" : " pedidos") +
+    caixa.append(el("h2", {textContent: "Sugestão do sistema: " + r.pendentes + (r.pendentes === 1 ? " pedido" : " pedidos") +
                                          " em " + r.viagens + (r.viagens === 1 ? " viagem" : " viagens")}));
+    // Resumo e botões numa linha só e as sugestões lado a lado: o quadro dos motoboys continua à vista.
+    const topo = el("div", {className: "sugTopo"}), lista = el("div", {className: "sugLista"});
+    caixa.append(topo, lista);
     if (r.agrupou && r.economia_km > 0.05)
-      caixa.append(el("div", {className: "economia", textContent: "📍 Total: ~" + r.km_com + " km · 📉 Economia estimada: ~" + r.economia_km +
+      topo.append(el("div", {className: "economia", textContent: "Total: ~" + r.km_com + " km · Economia estimada: ~" + r.economia_km +
                                " km (" + r.economia_pct + "% menos que mandar um por um)" +
-                               (r.economia_reais ? " · 💰 ~" + reais(r.economia_reais) : "")}));
+                               (r.economia_reais ? " · ~" + reais(r.economia_reais) : "")}));
     else
-      caixa.append(el("div", {className: "economia sem", textContent: "⚠️ Nenhum agrupamento vantajoso encontrado. " +
+      topo.append(el("div", {className: "economia sem", textContent: "Nenhum agrupamento vantajoso encontrado. " +
                                "Cada um vai sozinho, para quem consegue entregar mais rápido. Total: ~" + r.km_com + " km"}));
     // Plano que será gravado. "Escolher outro" move os pedidos novos de um motoboy para outro.
     const plano = JSON.parse(JSON.stringify(r.plano));
     r.sugestoes.forEach((sg) => {
       const bloco = el("div", {className: "sug-moto"});
       const titulo = el("div", {className: "quem"}, el("span", {className: "bolinha", style: "background:" + corDe(sg.motoboy)}),
-                        document.createTextNode("🛵 " + sg.motoboy + " → " + sg.novos + (sg.novos === 1 ? " pedido" : " pedidos")));
+                        document.createTextNode(sg.motoboy + " → " + sg.novos + (sg.novos === 1 ? " pedido" : " pedidos")));
       bloco.append(titulo,
-        el("div", {className: "sug-numeros", textContent: "📍 ~" + sg.km + " km · ⏱️ ~" + sg.minutos + " min para terminar e voltar" + (sg.saiu ? " · na próxima saída" : "")}));
+        el("div", {className: "sug-numeros", textContent: "~" + sg.km + " km · ~" + sg.minutos + " min para terminar e voltar" + (sg.saiu ? " · na próxima saída" : "")}));
       sg.viagens.forEach((v, i) => {
         const linha = el("div", {className: "sug-viagem"});
         if (sg.viagens.length > 1) linha.append(el("strong", {textContent: (i + 1) + "ª saída: "}));
@@ -1505,15 +1627,15 @@ async function verSugestao() {
         if (destino === sg.motoboy && r.plano[destino]) plano[destino] = JSON.parse(JSON.stringify(r.plano[destino]));
         else plano[destino] = (plano[destino] || []).concat([novosIds]);
         atual = destino;
-        titulo.lastChild.textContent = "🛵 " + destino + " → " + sg.novos + (sg.novos === 1 ? " pedido" : " pedidos") +
+        titulo.lastChild.textContent = destino + " → " + sg.novos + (sg.novos === 1 ? " pedido" : " pedidos") +
                                        (destino === sg.motoboy ? "" : " (trocado por você)");
         titulo.firstChild.style.background = corDe(destino);
         bloco.classList.toggle("trocado", destino !== sg.motoboy);
       };
       bloco.append(el("div", {className: "acoes"}, sel));
-      caixa.append(bloco);
+      lista.append(bloco);
     });
-    const ok = el("button", {className: "verde", textContent: "✓ Despachar", style: "font-size:1.05rem;font-weight:700;padding:10px 24px"});
+    const ok = el("button", {className: "verde", textContent: "Despachar", style: "font-size:1rem;padding:12px 32px"});
     const nao = el("button", {className: "claro", textContent: "Agora não"});
     ok.onclick = async () => {
       ok.disabled = true;
@@ -1521,7 +1643,8 @@ async function verSugestao() {
       catch (err) { dizer($("msgDespacho"), err.message, "erro"); ok.disabled = false; }
     };
     nao.onclick = () => { caixa.style.display = "none"; };
-    caixa.append(el("div", {className: "linha"}, ok, nao),
+    topo.append(ok, nao);
+    caixa.append(
                  el("div", {className: "ajuda", textContent: "Quilômetros estimados. Ao confirmar, a ordem final das paradas usa as ruas de verdade."}));
     caixa.style.display = "block";
     caixa.scrollIntoView({behavior: "smooth", block: "nearest"});
@@ -1533,7 +1656,7 @@ async function verSugestao() {
 // Modo de despacho e regras
 // ---------------------------------------------------------------------
 let modoAtual = "assistido", ultimoAuto = null;
-const NOMES_BOTAO = {assistido: "🧠 Despachar", automatico: "🧠 Despachar agora"};
+const NOMES_BOTAO = {assistido: "Despachar", automatico: "Despachar agora"};
 function reais(v) { return "R$ " + Number(v).toFixed(2).replace(".", ","); }
 function mostrarModo(modo, auto) {
   // "manual" é de versões antigas: hoje funciona igual ao assistido.
@@ -1544,7 +1667,7 @@ function mostrarModo(modo, auto) {
   const pend = Number($("rPendentes").textContent) || 0;
   $("despachar").textContent = NOMES_BOTAO[modoAtual] + (pend ? " (" + pend + ")" : "");
   let info = "";
-  if (modoAtual === "automatico") info = "🤖 Automático ligado" + (auto && auto.quando ? " · último às " + auto.quando + ": " + auto.texto : " · esperando pedidos");
+  if (modoAtual === "automatico") info = "Automático ligado" + (auto && auto.quando ? " · último às " + auto.quando + ": " + auto.texto : " · esperando pedidos");
   else info = "O sistema sugere quem leva cada pedido; você confere e confirma.";
   $("infoAuto").textContent = info;
 }
@@ -1608,19 +1731,52 @@ function pinHtml(texto, classe, cor) {
   if (cor) d.style.background = cor;
   return d.outerHTML;
 }
-// Um "chip" por motoboy de turno: situação, pedidos, km, quando fica livre e GPS.
-// Redesenhado a cada atualização (o "há 20 s" muda); clique mostra a rota no mapa.
-function desenharChips() {
-  const chips = $("chipsMoto"); chips.innerHTML = "";
-  listaMotoboys.filter((m) => m.ativo || paradasDe(m.id).length).forEach((m) => {
-    chips.append(el("button", {className: "chip", onclick: () => focarMotoboy(m)},
-      el("span", {className: "bolinha", style: "background:" + corDe(m.id)}), el("strong", {textContent: m.id}),
-      el("span", {className: "st", textContent: textoSituacao(m)})));
+// Quadro: uma coluna por motoboy de turno (ou com paradas), quem fica livre primeiro
+// à esquerda. Cada coluna mostra quando ele volta, uma barra do tempo até ficar livre
+// e as paradas na ordem. Clique no nome mostra a rota no mapa.
+let ultimoQuadro = "";
+const HORIZONTE_MIN = 60;  // barra cheia = livre só daqui a 1 hora ou mais
+function horaDaqui(min) {
+  return new Date(Date.now() + min * 60000).toLocaleTimeString("pt-BR", {hour: "2-digit", minute: "2-digit"});
+}
+function desenharQuadro() {
+  const motos = listaMotoboys.filter((m) => m.ativo || paradasDe(m.id).length)
+    .sort((a, b) => (b.ativo - a.ativo) || ((a.minutos_livre || 0) - (b.minutos_livre || 0)) || a.id.localeCompare(b.id));
+  const assinatura = JSON.stringify([motos.map((m) => [m.id, textoSituacao(m), corDe(m.id)]),
+                                     pedidosAtuais.filter((p) => p.status !== "pendente"), Math.floor(Date.now() / 60000)]);
+  if (assinatura === ultimoQuadro) return;
+  ultimoQuadro = assinatura;
+  $("contQuadro").textContent = listaMotoboys.filter((m) => m.ativo).length + " de turno";
+  const quadro = $("quadroMotos"); quadro.innerHTML = "";
+  if (!motos.length) {
+    quadro.append(el("div", {className: "semMotos", textContent: "Nenhum motoboy de turno. Coloque alguém de turno na aba Motoboys."}));
+    return;
+  }
+  motos.forEach((m) => {
+    const ps = paradasDe(m.id), livreAgora = m.ativo && !m.minutos_livre && !ps.length;
+    const col = el("div", {className: "colMoto" + (m.ativo ? "" : " fora")});
+    col.style.setProperty("--cor-moto", corDe(m.id));
+    const quando = !m.ativo ? el("div", {className: "livreEm", textContent: "fora de turno"})
+      : livreAgora ? el("div", {className: "livreEm agora"}, el("b", {textContent: "livre agora"}), document.createTextNode("no restaurante"))
+      : el("div", {className: "livreEm"}, el("small", {textContent: "volta às"}), el("b", {textContent: horaDaqui(m.minutos_livre || 0)}),
+           document.createTextNode("livre em ~" + (m.minutos_livre || 0) + " min"));
+    col.append(el("button", {className: "cabMoto", title: "Ver a rota no mapa", onclick: () => focarMotoboy(m)},
+                  el("span", {className: "nomeCol"}, el("span", {className: "bolinha"}), document.createTextNode(m.id)),
+                  el("span", {className: "stMoto", textContent: (SITUACAO[m.situacao] || "") + (m.km_rota ? " · ~" + m.km_rota + " km" : "")}),
+                  quando));
+    const barra = el("div", {className: "tempoLivre", title: "Tempo até ficar livre"}, el("i"));
+    barra.firstChild.style.width = Math.min(100, Math.round((m.minutos_livre || 0) / HORIZONTE_MIN * 100)) + "%";
+    col.append(barra);
+    if (ps.length) ps.forEach((p) => col.append(cartaoPedido(p)));
+    else col.append(el("div", {className: "vagaMoto", textContent: m.situacao === "voltando" ? "Voltando para o restaurante" : "Pronto para sair"}));
+    if (m.gps_ativo && m.gps_segundos !== null)
+      col.append(el("div", {className: "rodapeMoto", textContent: "GPS " + (m.gps_segundos < 60 ? "há " + m.gps_segundos + " s" : "há " + Math.round(m.gps_segundos / 60) + " min")}));
+    quadro.append(col);
   });
 }
 function desenharMapa() {
   iniciarMapa();
-  desenharChips();
+  desenharQuadro();
   const assinatura = JSON.stringify([pedidosAtuais.map((p) => [p.id, p.lat, p.lng, p.status, p.motoboy_id, p.ordem, p.atrasado]),
                                      listaMotoboys.map((m) => [m.id, m.gps_lat, m.gps_lng, m.situacao, m.km_rota, m.minutos_livre, m.ativo])]);
   if (assinatura === ultimoMapa) return;
@@ -1643,7 +1799,8 @@ function desenharMapa() {
   pedidosAtuais.forEach((p) => {
     const pendente = p.status === "pendente";
     const texto = p.num ? String(p.num) : "•";
-    const html = pinHtml(texto, (pendente ? "pend" : "") + (p.atrasado ? " atrasado" : ""), pendente ? null : corDe(p.motoboy_id));
+    const html = pinHtml(texto, (pendente ? "pend" : "") + (p.situacao === "atencao" ? " atencao" : "") + (p.atrasado ? " atrasado" : ""),
+                         pendente ? null : corDe(p.motoboy_id));
     const popup = el("div", {}, el("strong", {textContent: p.rotulo}), el("br"), document.createTextNode(p.endereco), el("br"),
                      el("span", {textContent: pendente ? "Na fila há " + (p.minutos || 0) + " min" : p.motoboy_id + " · parada " + p.ordem}));
     const mk = L.marker([p.lat, p.lng], {icon: L.divIcon({className: "", html: html, iconSize: [26, 26]}),
@@ -1653,7 +1810,7 @@ function desenharMapa() {
   });
 
   listaMotoboys.filter((m) => m.gps_ativo).forEach((m) => {
-    L.marker([m.gps_lat, m.gps_lng], {icon: L.divIcon({className: "", html: pinHtml("🛵 " + m.id.slice(0, 2).toUpperCase(), "moto", corDe(m.id)), iconSize: [40, 28]}),
+    L.marker([m.gps_lat, m.gps_lng], {icon: L.divIcon({className: "", html: pinHtml(m.id.slice(0, 2).toUpperCase(), "moto", corDe(m.id)), iconSize: [40, 28]}),
                                       zIndexOffset: 400}).bindPopup(() => infoMotoboy(m)).addTo(camadaOp);
     pontos.push([m.gps_lat, m.gps_lng]);
   });
@@ -1662,12 +1819,13 @@ function desenharMapa() {
   if (!jaEnquadrou && pontos.length > 1) { mapaOp.fitBounds(pontos, {padding: [30, 30], maxZoom: 16}); jaEnquadrou = true; }
 
   const leg = $("legenda"); leg.innerHTML = "";
-  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--verde)"}), document.createTextNode("Restaurante")));
-  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:#f97316"}), document.createTextNode("Pedido aguardando")));
-  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--vermelho)"}), document.createTextNode("Atrasado")));
-  leg.append(el("span", {}, document.createTextNode("Paradas e 🛵 na cor de cada motoboy")));
+  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--azul);border-radius:3px"}), document.createTextNode("Restaurante")));
+  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--ok)"}), document.createTextNode("Na fila, no prazo")));
+  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--atencao)"}), document.createTextNode("Atenção")));
+  leg.append(el("span", {}, el("span", {className: "bolinha", style: "background:var(--atraso)"}), document.createTextNode("Atrasado")));
+  leg.append(el("span", {}, document.createTextNode("Paradas e motoboys na cor de cada um")));
 }
-const SITUACAO = {disponivel: "🟢 disponível", saindo: "📦 no restaurante, saindo", em_rota: "🚴 em rota", voltando: "↩ voltando"};
+const SITUACAO = {disponivel: "disponível", saindo: "no restaurante, saindo", em_rota: "em rota", voltando: "voltando"};
 function paradasDe(id) {
   return pedidosAtuais.filter((p) => p.status === "despachado" && p.motoboy_id === id).sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
 }
@@ -1678,7 +1836,7 @@ function textoSituacao(m) {
   if (ps.length) t += " · " + ps.length + (ps.length === 1 ? " pedido" : " pedidos") + " · ~" + m.km_rota + " km";
   if (m.minutos_livre) t += " · livre em ~" + m.minutos_livre + " min";
   if (m.gps_ativo && m.gps_segundos !== null)
-    t += " · 📍 " + (m.gps_segundos < 60 ? "há " + m.gps_segundos + " s" : "há " + Math.round(m.gps_segundos / 60) + " min");
+    t += " · GPS " + (m.gps_segundos < 60 ? "há " + m.gps_segundos + " s" : "há " + Math.round(m.gps_segundos / 60) + " min");
   return t;
 }
 // Cartão do motoboy (popup do mapa): situação e as paradas na ordem.
@@ -1688,7 +1846,7 @@ function infoMotoboy(m) {
   const ps = paradasDe(m.id);
   if (ps.length) {
     const ol = el("ol");
-    ps.forEach((p) => ol.append(el("li", {textContent: p.rotulo + " — " + p.endereco + (p.atrasado ? " ⚠" : "")})));
+    ps.forEach((p) => ol.append(el("li", {textContent: p.rotulo + " — " + p.endereco + (p.atrasado ? " (atrasado)" : "")})));
     d.append(ol);
   }
   return d;
@@ -1852,8 +2010,8 @@ let ultimaEstat = 0;
 function mostrarEconomiaHoje(g) {
   const caixa = $("economiaHoje");
   if (!g || !g.entregas || !g.km_economizados) { caixa.style.display = "none"; return; }
-  caixa.textContent = "🧠 Hoje: " + g.entregas + " entregas em " + g.viagens + " viagens · 📉 ~" + g.km_economizados +
-    " km economizados (" + g.economia_pct + "% menos deslocamento)" + (g.economia_reais ? " · 💰 ~" + reais(g.economia_reais) : "");
+  caixa.textContent = "Hoje: " + g.entregas + " entregas em " + g.viagens + " viagens · ~" + g.km_economizados +
+    " km economizados (" + g.economia_pct + "% menos deslocamento)" + (g.economia_reais ? " · ~" + reais(g.economia_reais) : "");
   caixa.style.display = "block";
 }
 async function carregarEstat(forcar) {
@@ -1876,7 +2034,7 @@ async function carregarEstat(forcar) {
       cartaoEstat("~" + g.km, "km rodados", cmp.km_por_entrega, true),
       cartaoEstat("~" + g.km_economizados, "km economizados"),
       cartaoEstat(g.economia_pct === null ? "—" : g.economia_pct + "%", "menos deslocamento"),
-      g.economia_reais ? cartaoEstat(reais(g.economia_reais), "💰 economizados") : null,
+      g.economia_reais ? cartaoEstat(reais(g.economia_reais), "economizados") : null,
       cartaoEstat(fmt(g.tempo_medio_min, " min"), "tempo médio", cmp.tempo_medio_min, true),
       cartaoEstat(fmt(g.no_prazo_pct, "%"), "no prazo (" + Math.round(r.prazo_min) + " min)")].filter(Boolean)));
     caixa.append(el("div", {className: "ajuda", textContent: "▲▼ comparado com o período anterior (km e viagens por entrega). Km estimados."}));
