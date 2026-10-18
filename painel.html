@@ -8,6 +8,9 @@
 <!-- integrity: se o arquivo do CDN for alterado por alguém, o navegador se recusa a usá-lo
      (protege a API_KEY guardada na página). Hashes oficiais do Leaflet 1.9.4. -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,400;0,500;0,600;0,700;1,700&display=swap" rel="stylesheet">
 <style>
  :root{
   --fundo:#f1f3f6; --cartao:#fff; --texto:#1f2937; --suave:#6b7280; --borda:#e5e7eb;
@@ -179,19 +182,116 @@
  table.motos th:first-child,table.motos td:first-child{text-align:left}
  .tabela{overflow-x:auto}
  #qrMoto img{display:block;margin:8px 0;image-rendering:pixelated}
- /* Login */
- #telaLogin{position:fixed;inset:0;z-index:3000;background:var(--escuro);display:none;align-items:center;justify-content:center;padding:16px}
- .caixaLogin{background:#fff;border-radius:14px;padding:24px;width:100%;max-width:380px}
- .caixaLogin h1{font-size:1.25rem;margin:0 0 12px}
- .caixaLogin input{width:100%;margin-top:8px;padding:11px}
- button.grande{width:100%;margin-top:12px;padding:12px;font-size:1.05rem;font-weight:700}
- .linkzinho{background:none;color:var(--suave);padding:6px 0;font-size:.85rem;text-decoration:underline}
+ /* Login (entregaAI): painel escuro com o mapa de uma rota, sobre a cidade à noite.
+    As variáveis são redefinidas só dentro de #telaLogin; o resto do painel não muda. */
+ #telaLogin{
+  --lg-azul-400:#43B2FF; --lg-azul-500:#289BEF; --lg-botao:#1877BE; --lg-botao-hover:#156CAD; --lg-botao-ativo:#115C94;
+  --lg-fundo:#1C1B26; --lg-rua-fundo:#252431; --lg-avenida-fundo:#292836; --lg-rio-fundo:#212838;
+  --lg-painel:#2B2A37; --lg-campo:#343442; --lg-campo-hover:#3A3A49;
+  --lg-texto:#F6F7FA; --lg-texto-2:#A2A5B3; --lg-texto-3:#777C8D;
+  --lg-secundario:#515766; --lg-secundario-hover:#5C6373; --lg-erro:#F07178;
+  --lg-rua:#383847; --lg-rua-forte:#41414F; --lg-quadra:#2F2E3B; --lg-rio:#2C3546;
+  --lg-fonte:"Poppins","Archivo",system-ui,sans-serif;
+  position:fixed;inset:0;z-index:3000;display:none;overflow-y:auto;background:var(--lg-fundo);color:var(--lg-texto);
+  font-family:var(--lg-fonte);font-variant-numeric:normal;-webkit-font-smoothing:antialiased;color-scheme:dark;caret-color:var(--lg-azul-400);
+  scrollbar-color:var(--lg-secundario) transparent}
+ #telaLogin ::selection{background:rgba(40,155,239,.38);color:#fff}
+ #telaLogin :focus-visible{outline:2px solid var(--lg-azul-400);outline-offset:3px;box-shadow:none}
+ #telaLogin a{color:var(--lg-azul-400)}
+ .lg-cidade,.lg-brilho{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+ .lg-brilho{background:radial-gradient(55% 45% at 72% 42%,rgba(40,155,239,.13),transparent 70%),
+                      radial-gradient(120% 95% at 50% 50%,transparent 45%,rgba(12,12,18,.7) 100%)}
+ .lg-cidade__rota{fill:none;stroke:var(--lg-azul-500);stroke-width:2;stroke-dasharray:6 7;stroke-linejoin:round;opacity:.45}
+ .lg-cidade__feito{fill:none;stroke:var(--lg-azul-500);stroke-width:2;stroke-linejoin:round;opacity:.55}
+ .lg-cidade__parada{fill:var(--lg-fundo);stroke:var(--lg-azul-500);stroke-width:2;opacity:.6}
+ .lg-cidade__base{fill:var(--lg-azul-500);opacity:.5}
+
+ .lg-pagina{position:relative;z-index:1;flex:1;min-width:0;min-height:100%;display:grid;grid-template-columns:minmax(0,1fr);place-items:center;padding:clamp(16px,4vw,48px)}
+ .lg-painel{position:relative;isolation:isolate;overflow:hidden;width:100%;max-width:1120px;min-height:640px;border-radius:14px;
+  background:var(--lg-painel);box-shadow:0 24px 40px rgba(14,15,25,.28);display:flex;flex-direction:column;padding:clamp(24px,4.5vw,48px)}
+ .lg-mapa{position:absolute;inset:0;z-index:-2;width:100%;height:100%}
+ .lg-veu{position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:linear-gradient(90deg,var(--lg-painel) 0%,rgba(43,42,55,.97) 36%,rgba(43,42,55,.55) 62%,rgba(43,42,55,.18) 100%),
+             linear-gradient(180deg,rgba(43,42,55,.5) 0%,transparent 22%,transparent 78%,rgba(43,42,55,.6) 100%)}
+ .lg-topo{display:flex;align-items:center;gap:clamp(24px,6vw,72px);flex-wrap:wrap}
+ .lg-marca{display:flex;align-items:center;gap:12px;min-height:44px}
+ .lg-marca__bola{width:28px;height:28px;border-radius:50%;background:var(--lg-azul-500);flex:none;display:grid;place-items:center}
+ .lg-marca__nome{font-weight:600;font-size:16px;letter-spacing:-.2px}
+ .lg-marca__nome b{font-weight:700}
+ .lg-ponto{color:var(--lg-azul-500)}
+ .lg-local{font-size:14px;font-weight:500;padding:12px 16px;border-radius:999px;background:rgba(255,255,255,.05)}
+ .lg-conteudo{flex:1;display:flex;flex-direction:column;justify-content:center;max-width:440px;width:100%;padding:clamp(40px,7vh,72px) 0 8px}
+ #telaLogin h1{margin:0;font-size:clamp(28px,3vw,36px);font-weight:700;line-height:1.2;letter-spacing:-.8px;text-wrap:balance}
+ .lg-apoio{margin:14px 0 32px;color:var(--lg-texto-2);font-size:15px;line-height:1.5;text-wrap:pretty}
+ .lg-apoio strong{color:var(--lg-texto);font-weight:500}
+ .lg-apoio:empty{display:none}
+ #telaLogin h1:has(+ .lg-apoio:empty){margin-bottom:24px}
+ /* O JS troca display entre "block" e "none", então o espaçamento é por margem, não por gap */
+ .lg-form>*+*{margin-top:12px}
+ .lg-subtitulo{margin:28px 0 0;font-size:15px;font-weight:600}
+ .lg-subtitulo span{color:var(--lg-texto-2);font-weight:400}
+ .lg-texto{color:var(--lg-texto-2);font-size:15px;line-height:1.5}
+ .lg-texto strong{color:var(--lg-texto);font-weight:500}
+ .lg-campo{display:flex;align-items:center;gap:8px;min-height:56px;padding:8px 6px 8px 16px;border-radius:10px;
+  background:var(--lg-campo);border:1px solid transparent;cursor:text;transition:background 150ms ease-out,border-color 150ms ease-out,box-shadow 150ms ease-out}
+ .lg-campo:hover{background:var(--lg-campo-hover)}
+ .lg-campo:focus-within{border-color:var(--lg-azul-500);box-shadow:0 0 0 3px rgba(40,155,239,.22)}
+ .lg-campo__texto{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding-right:10px}
+ .lg-campo__rotulo{color:var(--lg-texto-2);font-size:12px;transition:color 150ms ease-out}
+ .lg-campo:focus-within .lg-campo__rotulo{color:var(--lg-azul-400)}
+ #telaLogin .lg-campo input{width:100%;min-width:0;border:0;outline:0;padding:0;border-radius:0;background:transparent;box-shadow:none;
+  color:var(--lg-texto);font:600 15px/1.4 var(--lg-fonte)}
+ #telaLogin .lg-campo input::placeholder{color:var(--lg-texto-2);font-weight:400}
+ #telaLogin .lg-campo input[type=password]{letter-spacing:2px}
+ #telaLogin .lg-campo input[type=password]::placeholder{letter-spacing:normal}
+ #telaLogin .lg-campo input:-webkit-autofill{-webkit-text-fill-color:var(--lg-texto);transition:background-color 9999s}
+ .lg-campo__icone{flex:none;width:44px;height:44px;display:grid;place-items:center;color:var(--lg-texto-3)}
+ #telaLogin .lg-olho{flex:none;width:44px;height:44px;padding:0;border:0;border-radius:999px;background:transparent;color:var(--lg-texto-2);
+  display:grid;place-items:center;transition:background 150ms ease-out,color 150ms ease-out}
+ #telaLogin .lg-olho:hover{background:rgba(255,255,255,.06);color:var(--lg-texto)}
+ #telaLogin .lg-olho[aria-pressed=true]{color:var(--lg-azul-400)}
+ .lg-dica{color:var(--lg-texto-2);font-size:13px;line-height:1.45;padding-left:4px}
+ .lg-dica:empty{display:none}
+ .lg-mapaEscolha{height:220px;border-radius:10px;margin:0}
+
+ .lg-acoes{display:flex;gap:12px;margin-top:20px}
+ .lg-acoes>*{flex:1 1 0}
+ #telaLogin .lg-botao{min-height:48px;padding:0 24px;border:0;border-radius:999px;color:#fff;font:600 14px/1.4 var(--lg-fonte);
+  display:inline-flex;align-items:center;justify-content:center;gap:10px;white-space:normal;
+  transition:background 150ms ease-out,box-shadow 150ms ease-out,transform 150ms ease-out}
+ #telaLogin .lg-botao:active{transform:translateY(1px)}
+ #telaLogin .lg-botao--sec{background:var(--lg-secundario)}
+ #telaLogin .lg-botao--sec:hover{background:var(--lg-secundario-hover)}
+ #telaLogin .lg-botao--pri{background:var(--lg-botao);box-shadow:0 8px 20px rgba(40,155,239,.22)}
+ #telaLogin .lg-botao--pri:hover{background:var(--lg-botao-hover);box-shadow:0 10px 24px rgba(40,155,239,.3)}
+ #telaLogin .lg-botao--pri:active{background:var(--lg-botao-ativo)}
+ #telaLogin .lg-botao:disabled{cursor:progress;opacity:.75}
+ #telaLogin .lg-botao:disabled::before{content:"";width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;
+  animation:lg-girar .8s linear infinite}
+ @keyframes lg-girar{to{transform:rotate(360deg)}}
+
+ #msgLogin{display:flex;gap:12px;align-items:flex-start;margin-top:16px;padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.05);
+  color:var(--lg-texto);font-size:14px;line-height:1.45;font-weight:500}
+ #msgLogin:empty{display:none}
+ #msgLogin.erro{background:rgba(240,113,120,.1);color:var(--lg-texto)}
+ #msgLogin.erro::before{content:"";flex:none;width:18px;height:18px;margin-top:1px;background:var(--lg-erro);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Ccircle cx='9' cy='9' r='7.3' fill='none' stroke='%23000' stroke-width='1.5'/%3E%3Cpath d='M9 5v5' stroke='%23000' stroke-width='1.6' stroke-linecap='round'/%3E%3Ccircle cx='9' cy='12.6' r='1'/%3E%3C/svg%3E") center/contain no-repeat;
+          mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Ccircle cx='9' cy='9' r='7.3' fill='none' stroke='%23000' stroke-width='1.5'/%3E%3Cpath d='M9 5v5' stroke='%23000' stroke-width='1.6' stroke-linecap='round'/%3E%3Ccircle cx='9' cy='12.6' r='1'/%3E%3C/svg%3E") center/contain no-repeat}
+ .lg-selo{position:absolute;right:clamp(24px,4.5vw,48px);bottom:clamp(20px,4vw,40px);font-weight:700;font-style:italic;font-size:34px;letter-spacing:-3px;pointer-events:none}
+
+ @media (max-width:760px){
+  .lg-painel{min-height:calc(100svh - 32px);padding:24px}
+  .lg-veu{background:linear-gradient(180deg,rgba(43,42,55,.35) 0%,rgba(43,42,55,.75) 24%,var(--lg-painel) 42%)}
+  .lg-conteudo{justify-content:flex-start;padding-top:140px}
+  .lg-acoes{flex-direction:column-reverse}
+  .lg-selo,.lg-local{display:none}
+ }
+ @media (max-width:420px){ .lg-pagina{padding:0} .lg-painel{border-radius:0;min-height:100svh} }
+ @media (prefers-reduced-motion:reduce){ #telaLogin *{transition-duration:.01ms!important;animation-duration:.01ms!important} }
  #quemSou{color:#d1d5db;font-size:.88rem}
  body.funcionario .so-gestor{display:none !important}
  body:not(.admin) .so-admin{display:none !important}
  #linkConvite{word-break:break-all;margin-top:8px}
- #telaLogin{overflow-y:auto}
- .caixaLogin{margin:auto}
  .mapaEscolha{height:220px;border-radius:8px;margin:8px 0}
  #escolhaRest{padding:4px;max-width:200px}
  #listaRest td,#listaRest th{text-align:left}
@@ -201,42 +301,151 @@
 </head>
 <body>
 <div id="telaLogin">
- <div class="caixaLogin">
-  <h1>🛵 Despacho de entregas</h1>
-  <div id="formEntrar">
-   <div class="ajuda">Entre com o seu e-mail e senha.</div>
-   <input id="lgEmail" type="email" placeholder="E-mail" autocomplete="username">
-   <input id="lgSenha" type="password" placeholder="Senha" autocomplete="current-password">
-   <button id="btEntrar" class="verde grande">Entrar</button>
-   <div class="ajuda" style="margin-top:10px">Esqueceu a senha? Peça ao dono do restaurante para definir uma nova.</div>
-  </div>
-  <div id="formConvite" style="display:none">
-   <div class="ajuda" id="cvTitulo"></div>
-   <input id="cvNome" placeholder="Seu nome" autocomplete="name">
-   <input id="cvEmail" type="email" placeholder="Seu e-mail" autocomplete="username">
-   <input id="cvSenha" type="password" placeholder="Crie uma senha (mínimo 8 caracteres)" autocomplete="new-password">
-   <div id="cvRestaurante" style="display:none">
-    <div class="ajuda" style="margin-top:14px"><strong>🏪 Seu restaurante</strong> (de onde os motoboys saem):</div>
-    <input id="cvRestNome" placeholder="Nome do restaurante" maxlength="80">
-    <input id="cvRestEnd" placeholder="Endereço (ex.: Rua São Paulo, 123 - Centro)" maxlength="200">
-    <input id="cvRestCidade" placeholder="Cidade, UF (ex.: Itabira, MG)" maxlength="80">
-    <button id="cvRestBuscar" class="claro" style="width:100%;margin-top:8px">📍 Achar no mapa</button>
-    <div id="cvRestMapa" class="mapaEscolha" style="display:none"></div>
-    <div class="ajuda" id="cvRestDica"></div>
+ <!-- Fundo: a mesma cidade vista de mais longe, com outras rotas rodando -->
+ <svg class="lg-cidade" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+  <defs>
+   <pattern id="lgQuadras" width="84" height="72" patternUnits="userSpaceOnUse">
+    <path d="M0 0 H84 M0 0 V72" fill="none" stroke="var(--lg-rua-fundo)" stroke-width="2"/>
+   </pattern>
+   <pattern id="lgAvenidas" width="420" height="360" patternUnits="userSpaceOnUse">
+    <path d="M0 0 H420 M0 0 V360" fill="none" stroke="var(--lg-avenida-fundo)" stroke-width="6"/>
+   </pattern>
+  </defs>
+  <rect width="1600" height="1000" fill="var(--lg-fundo)"/>
+  <g transform="rotate(-8 800 500)">
+   <rect x="-300" y="-300" width="2200" height="1600" fill="url(#lgQuadras)"/>
+   <rect x="-300" y="-300" width="2200" height="1600" fill="url(#lgAvenidas)"/>
+   <path d="M-200 820 C 200 760, 420 900, 800 830 S 1380 740, 1800 820" fill="none" stroke="var(--lg-rio-fundo)" stroke-width="44" stroke-linecap="round"/>
+   <path d="M-100 1100 L 760 -160" fill="none" stroke="var(--lg-avenida-fundo)" stroke-width="7"/>
+   <path class="lg-cidade__feito" d="M120 288 H288"/><path class="lg-cidade__rota" d="M288 288 V144 H456 V72"/>
+   <rect class="lg-cidade__base" x="110" y="278" width="20" height="20" rx="6"/>
+   <circle class="lg-cidade__parada" cx="288" cy="144" r="6"/><circle class="lg-cidade__parada" cx="456" cy="72" r="6"/>
+   <path class="lg-cidade__feito" d="M84 936 V792"/><path class="lg-cidade__rota" d="M84 792 H252 V648 H336"/>
+   <rect class="lg-cidade__base" x="74" y="926" width="20" height="20" rx="6"/>
+   <circle class="lg-cidade__parada" cx="252" cy="648" r="6"/><circle class="lg-cidade__parada" cx="336" cy="648" r="6"/>
+   <path class="lg-cidade__feito" d="M1512 144 V288 H1428"/><path class="lg-cidade__rota" d="M1428 288 V432 H1512 V576"/>
+   <rect class="lg-cidade__base" x="1502" y="134" width="20" height="20" rx="6"/>
+   <circle class="lg-cidade__parada" cx="1428" cy="432" r="6"/><circle class="lg-cidade__parada" cx="1512" cy="576" r="6"/>
+   <path class="lg-cidade__feito" d="M1176 1008 V936"/><path class="lg-cidade__rota" d="M1176 936 V864 H1344 V792 H1428"/>
+   <rect class="lg-cidade__base" x="1166" y="998" width="20" height="20" rx="6"/>
+   <circle class="lg-cidade__parada" cx="1344" cy="864" r="6"/><circle class="lg-cidade__parada" cx="1428" cy="792" r="6"/>
+  </g>
+ </svg>
+ <div class="lg-brilho" aria-hidden="true"></div>
+
+ <div class="lg-pagina">
+  <div class="lg-painel">
+   <!-- Mapa do painel: a rota de um motoboy saindo do restaurante -->
+   <svg class="lg-mapa" id="lgMapa" viewBox="0 0 1120 640" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <rect width="1120" height="640" fill="var(--lg-quadra)"/>
+    <g transform="rotate(-8 560 320)">
+     <path d="M-120 610 C 180 560, 300 690, 560 600 S 980 520, 1300 600" fill="none" stroke="var(--lg-rio)" stroke-width="34" stroke-linecap="round"/>
+     <g id="lgRuas" stroke-linecap="square"></g>
+     <path d="M650 560 V430 H800 V290 H950 V150 H1040" fill="none" stroke="var(--lg-azul-500)" stroke-width="3" stroke-dasharray="7 7" stroke-linejoin="round" opacity=".9"/>
+     <path d="M650 560 V430 H800" fill="none" stroke="var(--lg-azul-500)" stroke-width="3" stroke-linejoin="round"/>
+     <g font-family="Poppins,sans-serif" font-weight="600" font-size="13" text-anchor="middle">
+      <g transform="translate(800 430)"><circle r="14" fill="var(--lg-painel)" stroke="var(--lg-azul-500)" stroke-width="2"/><text y="4.5" fill="var(--lg-texto)" transform="rotate(8)">1</text></g>
+      <g transform="translate(950 290)"><circle r="14" fill="var(--lg-painel)" stroke="var(--lg-texto-3)" stroke-width="2"/><text y="4.5" fill="var(--lg-texto-2)" transform="rotate(8)">2</text></g>
+      <g transform="translate(1040 150)"><circle r="14" fill="var(--lg-painel)" stroke="var(--lg-texto-3)" stroke-width="2"/><text y="4.5" fill="var(--lg-texto-2)" transform="rotate(8)">3</text></g>
+     </g>
+     <g transform="translate(650 560) rotate(8)">
+      <circle r="30" fill="var(--lg-azul-500)" opacity=".14"/>
+      <rect x="-16" y="-16" width="32" height="32" rx="9" fill="var(--lg-azul-500)"/>
+      <path d="M-8 -3 h16 l-2 -6 h-12 z M-7 -2 v9 h14 v-9 M-2 7 v-5 h4 v5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/>
+     </g>
+     <g>
+      <circle r="13" fill="var(--lg-azul-500)" opacity=".22"/>
+      <circle r="6.5" fill="#fff" stroke="var(--lg-azul-500)" stroke-width="3"/>
+      <animateMotion dur="14s" repeatCount="indefinite" calcMode="linear" keyPoints="0;1;1" keyTimes="0;.86;1" path="M650 560 V430 H800 V290 H950 V150 H1040"/>
+     </g>
+    </g>
+   </svg>
+   <div class="lg-veu"></div>
+
+   <div class="lg-topo">
+    <span class="lg-marca">
+     <span class="lg-marca__bola" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 10.5 L6 6.5 L8.5 9 L12 3.5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+     </span>
+     <span class="lg-marca__nome">entrega<b>AI</b><span class="lg-ponto">.</span></span>
+    </span>
+    <span class="lg-local">Painel do restaurante</span>
    </div>
-   <button id="btConvite" class="verde grande">Criar minha conta</button>
+
+   <div class="lg-conteudo">
+    <h1 id="lgTitulo">Entrar no painel<span class="lg-ponto">.</span></h1>
+    <p class="lg-apoio" id="lgApoio"></p>
+
+    <div id="formEntrar" class="lg-form">
+     <label class="lg-campo">
+      <span class="lg-campo__texto"><span class="lg-campo__rotulo">E-mail</span>
+       <input id="lgEmail" type="email" autocomplete="username" inputmode="email" spellcheck="false"></span>
+      <span class="lg-campo__icone" aria-hidden="true">
+       <svg width="18" height="18" viewBox="0 0 18 18"><rect x="1.5" y="3.5" width="15" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 5 L9 10 L15.5 5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+      </span>
+     </label>
+     <label class="lg-campo">
+      <span class="lg-campo__texto"><span class="lg-campo__rotulo">Senha</span>
+       <input id="lgSenha" type="password" autocomplete="current-password" aria-describedby="lgDicaSenha"></span>
+      <button type="button" class="lg-olho" data-senha="lgSenha" aria-label="Mostrar senha" aria-pressed="false">
+       <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M1.5 9 C 4 4.5, 14 4.5, 16.5 9 C 14 13.5, 4 13.5, 1.5 9 Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="9" cy="9" r="2.3" fill="currentColor"/></svg>
+      </button>
+     </label>
+     <div class="lg-dica" id="lgDicaSenha">Esqueceu a senha? O dono do restaurante define uma nova.</div>
+    </div>
+
+    <div id="formConvite" class="lg-form" style="display:none">
+     <div class="lg-texto" id="cvTitulo"></div>
+     <label class="lg-campo"><span class="lg-campo__texto"><span class="lg-campo__rotulo">Seu nome</span>
+      <input id="cvNome" autocomplete="name"></span></label>
+     <label class="lg-campo"><span class="lg-campo__texto"><span class="lg-campo__rotulo">Seu e-mail</span>
+      <input id="cvEmail" type="email" autocomplete="username" inputmode="email" spellcheck="false"></span></label>
+     <label class="lg-campo">
+      <span class="lg-campo__texto"><span class="lg-campo__rotulo">Crie uma senha</span>
+       <input id="cvSenha" type="password" placeholder="Mínimo 8 caracteres" autocomplete="new-password"></span>
+      <button type="button" class="lg-olho" data-senha="cvSenha" aria-label="Mostrar senha" aria-pressed="false">
+       <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M1.5 9 C 4 4.5, 14 4.5, 16.5 9 C 14 13.5, 4 13.5, 1.5 9 Z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="9" cy="9" r="2.3" fill="currentColor"/></svg>
+      </button>
+     </label>
+     <div id="cvRestaurante" class="lg-form" style="display:none">
+      <p class="lg-subtitulo">Seu restaurante <span>· de onde os motoboys saem</span></p>
+      <label class="lg-campo"><span class="lg-campo__texto"><span class="lg-campo__rotulo">Nome do restaurante</span>
+       <input id="cvRestNome" maxlength="80"></span></label>
+      <label class="lg-campo"><span class="lg-campo__texto"><span class="lg-campo__rotulo">Endereço</span>
+       <input id="cvRestEnd" placeholder="Rua São Paulo, 123 - Centro" maxlength="200"></span></label>
+      <label class="lg-campo"><span class="lg-campo__texto"><span class="lg-campo__rotulo">Cidade, UF</span>
+       <input id="cvRestCidade" placeholder="Itabira, MG" maxlength="80"></span></label>
+      <button type="button" id="cvRestBuscar" class="lg-botao lg-botao--sec" style="width:100%">Achar no mapa</button>
+      <div id="cvRestMapa" class="mapaEscolha lg-mapaEscolha" style="display:none"></div>
+      <div class="lg-dica" id="cvRestDica"></div>
+     </div>
+    </div>
+
+    <div id="semConta" class="lg-form" style="display:none">
+     <p class="lg-texto" style="margin:0">Abra o <strong>link de convite</strong> que você recebeu do administrador para criar a sua conta.</p>
+    </div>
+
+    <div id="formAdmin" class="lg-form" style="display:none">
+     <label class="lg-campo">
+      <span class="lg-campo__texto"><span class="lg-campo__rotulo">Chave do sistema (API_KEY)</span>
+       <input id="adChave" type="password" autocomplete="off" spellcheck="false"></span>
+      <span class="lg-campo__icone" aria-hidden="true">
+       <svg width="18" height="18" viewBox="0 0 18 18"><circle cx="6" cy="9" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.4 9 H16 M13.5 9 V12 M15.8 9 V11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </span>
+     </label>
+    </div>
+
+    <div class="lg-acoes">
+     <button type="button" id="alternarAdmin" class="lg-botao lg-botao--sec">Sou administrador</button>
+     <button type="button" id="btEntrar" class="lg-botao lg-botao--pri">Entrar</button>
+     <button type="button" id="btConvite" class="lg-botao lg-botao--pri">Criar minha conta</button>
+     <button type="button" id="btAdmin" class="lg-botao lg-botao--pri">Entrar como admin</button>
+    </div>
+    <div id="msgLogin" role="status" aria-live="polite"></div>
+   </div>
+
+   <div class="lg-selo" aria-hidden="true">eA</div>
   </div>
-  <div id="semConta" style="display:none">
-   <div class="ajuda" style="font-size:.95rem">Este sistema ainda não foi ativado. Abra o <strong>link de convite</strong> que você recebeu
-    do administrador para criar a sua conta.</div>
-  </div>
-  <div id="formAdmin" style="display:none">
-   <div class="ajuda">Acesso do administrador do sistema, com a chave (API_KEY).</div>
-   <input id="adChave" type="password" placeholder="Chave do sistema (API_KEY)" autocomplete="off">
-   <button id="btAdmin" class="grande">Entrar como administrador</button>
-  </div>
-  <div id="msgLogin" style="margin-top:8px"></div>
-  <button id="alternarAdmin" class="linkzinho">Entrar com a chave de administrador</button>
  </div>
 </div>
 <div class="topo">
@@ -544,9 +753,50 @@ function dizer(alvo, texto, classe) { alvo.textContent = texto; alvo.className =
 let convite = new URLSearchParams(location.hash.slice(1)).get("convite") || "";
 if (location.hash) history.replaceState(null, "", location.pathname);
 
+// Tela de login: título, texto de apoio e botões acompanham o formulário que está aberto.
+const textosLogin = {
+  formEntrar: {titulo: "Entrar no painel", apoio: 'Ainda não tem conta? Abra o <strong>link de convite</strong> que você recebeu.'},
+  formConvite: {titulo: "Criar sua conta", apoio: ""},
+  semConta: {titulo: "Sistema ainda não ativado", apoio: ""},
+  formAdmin: {titulo: "Acesso do administrador", apoio: "Para quem cuida do sistema. A chave fica guardada só enquanto esta aba estiver aberta."},
+};
+const botaoDoForm = {formEntrar: "btEntrar", formConvite: "btConvite", formAdmin: "btAdmin"};
+function sincronizarLogin() {
+  const aberto = Object.keys(textosLogin).find((i) => $(i).style.display !== "none") || "formEntrar";
+  $("lgTitulo").innerHTML = textosLogin[aberto].titulo + '<span class="lg-ponto">.</span>';
+  $("lgApoio").innerHTML = textosLogin[aberto].apoio;
+  Object.entries(botaoDoForm).forEach(([f, b]) => { $(b).style.display = f === aberto ? "" : "none"; });
+  $("alternarAdmin").style.display = aberto === "formConvite" ? "none" : "";  // quem tem convite não é administrador
+}
+document.querySelectorAll("#telaLogin .lg-olho").forEach((olho) => olho.onclick = () => {
+  const campo = $(olho.dataset.senha), ver = campo.type === "password";
+  campo.type = ver ? "text" : "password";
+  olho.setAttribute("aria-pressed", ver);
+  olho.setAttribute("aria-label", ver ? "Esconder senha" : "Mostrar senha");
+});
+// Ruas do mapa do login: grade levemente torta, com duas avenidas mais largas.
+(function desenharRuasLogin() {
+  const ns = "http://www.w3.org/2000/svg", g = $("lgRuas");
+  const linha = (x1, y1, x2, y2, larg, cor) => {
+    const l = document.createElementNS(ns, "line");
+    Object.entries({x1, y1, x2, y2, stroke: cor, "stroke-width": larg}).forEach(([k, v]) => l.setAttribute(k, v));
+    g.appendChild(l);
+  };
+  [-60,20,95,170,250,330,410,490,570,650,725,800,880,950,1040,1110,1190,1270]
+    .forEach((x) => linha(x, -120, x, 780, x === 490 ? 9 : 3, x === 490 ? "var(--lg-rua-forte)" : "var(--lg-rua)"));
+  [-80,10,80,150,220,290,360,430,500,560,640,720]
+    .forEach((y) => linha(-120, y, 1320, y, y === 360 ? 9 : 3, y === 360 ? "var(--lg-rua-forte)" : "var(--lg-rua)"));
+  linha(380, 760, 1260, -120, 7, "var(--lg-rua-forte)");
+  // No celular o mapa fica no topo: enquadra o canto onde a rota passa.
+  const celular = matchMedia("(max-width: 760px)");
+  const enquadrar = () => $("lgMapa").setAttribute("preserveAspectRatio", celular.matches ? "xMaxYMin slice" : "xMidYMid slice");
+  enquadrar(); celular.addEventListener("change", enquadrar);
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { $("lgMapa").pauseAnimations(); $("lgMapa").setCurrentTime(5); }
+})();
+
 async function mostrarLogin(msg) {
   $("telaLogin").style.display = "flex";
-  $("formAdmin").style.display = "none"; $("alternarAdmin").textContent = "Entrar com a chave de administrador";
+  $("formAdmin").style.display = "none"; $("alternarAdmin").textContent = "Sou administrador";
   ["formEntrar", "formConvite", "semConta"].forEach((i) => $(i).style.display = "none");
   let temUsuarios = true, papelConvite = null;
   try { temUsuarios = (await (await fetch("/auth/estado")).json()).tem_usuarios; } catch (e) {}
@@ -568,6 +818,7 @@ async function mostrarLogin(msg) {
   } else {
     $("formEntrar").style.display = "block"; $("lgEmail").focus();
   }
+  sincronizarLogin();
   dizer($("msgLogin"), msg || "", msg ? "erro" : "");
 }
 async function postLogin(caminho, corpo) {
@@ -646,7 +897,7 @@ $("alternarAdmin").onclick = () => {
   if (!abrir) { mostrarLogin(); return; }
   ["formEntrar", "formConvite", "semConta"].forEach((i) => $(i).style.display = "none");
   $("formAdmin").style.display = "block";
-  $("alternarAdmin").textContent = "Voltar para e-mail e senha"; dizer($("msgLogin"), ""); $("adChave").focus();
+  $("alternarAdmin").textContent = "Usar e-mail e senha"; sincronizarLogin(); dizer($("msgLogin"), ""); $("adChave").focus();
 };
 [["lgSenha", "btEntrar"], ["lgEmail", "btEntrar"], ["cvSenha", "btConvite"], ["adChave", "btAdmin"]].forEach(([c, b]) => {
   $(c).onkeydown = (e) => { if (e.key === "Enter") $(b).click(); };
