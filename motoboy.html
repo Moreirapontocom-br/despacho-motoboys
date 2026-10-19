@@ -4,76 +4,169 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="google" content="notranslate">
-<meta name="theme-color" content="#111827">
+<meta name="theme-color" content="#1C1B26">
+<meta name="color-scheme" content="light dark">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="icon" href="/icone.svg" type="image/svg+xml">
 <title>Minhas entregas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!-- integrity: se o arquivo do CDN for alterado por alguém, o navegador se recusa a usá-lo. Hashes oficiais do Leaflet 1.9.4. -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <style>
- :root{--fundo:#f1f3f6;--texto:#111827;--suave:#6b7280;--verde:#059669;--azul:#2563eb;--vermelho:#b91c1c;--amarelo:#fef3c7}
+ /* Visual entregaAI (o mesmo do painel), pensado para o celular no suporte da moto:
+    claro de dia (lê no sol), escuro à noite (segue o modo do celular), botões grandes
+    para dedo com luva. A metade de cima só se lê; a placa de baixo só se toca. */
+ :root{--topo:#1C1B26;--fundo:#F4F5F8;--placa:#FFFFFF;--texto:#1C1B26;--suave:#4E5263;--linha:#D9DBE3;--campo:#E6E8EE;
+       --botao:#1877BE;--botao-forte:#13629E;--azul:#289BEF;--tinta:#1C1B26;--tinta-texto:#FFFFFF;
+       --ok:#17805A;--atraso:#C2343F;--atraso-texto:#FFFFFF;--sombra:rgba(28,27,38,.10)}
+ @media (prefers-color-scheme:dark){
+  :root{--fundo:#1C1B26;--placa:#2B2A37;--texto:#F6F7FA;--suave:#A2A5B3;--linha:#383847;--campo:#343442;
+        --botao-forte:#2088D6;--tinta:#F6F7FA;--tinta-texto:#1C1B26;--ok:#49C99A;--atraso:#F07178;--atraso-texto:#1C1B26;
+        --sombra:rgba(0,0,0,.45)}
+ }
  *{box-sizing:border-box}
- body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:var(--fundo);color:var(--texto);font-size:17px;
-      padding-bottom:env(safe-area-inset-bottom)}
- button,input{font:inherit}
- .cabeca{background:#111827;color:#fff;padding:12px 16px;padding-top:calc(12px + env(safe-area-inset-top));
-         display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:1000}
- .cabeca .nome{font-weight:800;font-size:1.15rem;letter-spacing:.02em;text-transform:uppercase;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
- .pilula{font-size:.85rem;font-weight:700;padding:5px 11px;border-radius:20px;background:#374151;white-space:nowrap}
- .pilula.livre{background:#065f46} .pilula.rota{background:#1d4ed8} .pilula.fora{background:#4b5563}
- main{max-width:560px;margin:0 auto;padding:12px}
- .cartao{background:#fff;border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
- .rot{font-size:.8rem;font-weight:800;color:var(--suave);text-transform:uppercase;letter-spacing:.05em}
- .grande{font-size:1.35rem;font-weight:800;line-height:1.25;margin:6px 0}
- .meio{font-size:1.05rem;margin:4px 0}
- .destaque{background:var(--amarelo);color:#92400e;font-weight:700;border-radius:8px;padding:8px 10px;margin:8px 0}
- .suave{color:var(--suave);font-size:.92rem}
- .botao{display:block;width:100%;border:0;border-radius:12px;padding:17px 12px;font-size:1.15rem;font-weight:800;color:#fff;
-        text-align:center;text-decoration:none;margin-top:10px;cursor:pointer}
- .botao:disabled{opacity:.55}
- .verde{background:var(--verde)} .azul{background:var(--azul)} .cinza{background:#6b7280} .claro{background:#e5e7eb;color:var(--texto)}
- .confirmando{background:#047857;box-shadow:0 0 0 4px #a7f3d0}
- .dupla{display:flex;gap:10px} .dupla .botao{flex:1}
- .passos{list-style:none;margin:0;padding:0}
- .passos li{display:flex;gap:12px;padding:12px 0;border-top:1px solid #e5e7eb}
- .passos li:first-child{border-top:0}
- .bola{flex:0 0 34px;height:34px;border-radius:50%;background:var(--azul);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
- .bola.rest{background:var(--verde)}
- .passos .info{flex:1;min-width:0}
- .passos .titulo{font-weight:800}
- .passos a.nav{display:inline-block;margin-top:6px;background:#eff6ff;color:var(--azul);font-weight:700;padding:7px 12px;border-radius:8px;text-decoration:none;font-size:.95rem}
- .seta{color:#9ca3af;text-align:center;font-size:.9rem;margin:-4px 0}
- .rodape{position:sticky;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:linear-gradient(transparent,var(--fundo) 30%)}
- .rodape .botao{margin:0;box-shadow:0 4px 14px rgba(5,150,105,.35)}
- #mapa{height:300px;border-radius:14px;margin-bottom:12px}
- .aviso{padding:14px 16px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:10px}
- .aviso.cancelado{background:var(--vermelho);color:#fff}
- .aviso.novo{background:#1d4ed8;color:#fff}
- .aviso button{background:#fff;color:#111827;border:0;border-radius:8px;padding:9px 14px;font-weight:800;flex-shrink:0}
- .linkzinho{background:none;border:0;color:var(--azul);font-weight:700;padding:8px 0;cursor:pointer}
- .grande-icone{font-size:3rem;text-align:center;margin:6px 0}
- #login input{width:100%;padding:13px;border-radius:10px;border:1px solid #d1d5db;margin-top:8px;font-size:1.05rem}
- .pino{min-width:28px;height:28px;padding:0 6px;border-radius:14px;color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;
-       justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45);background:var(--azul)}
- .pino.rest{background:var(--verde);border-radius:7px} .pino.eu{background:#111827} .pino.depois{background:#9ca3af}
+ ::selection{background:rgba(40,155,239,.35)}
+ html{scrollbar-color:var(--linha) transparent;-webkit-text-size-adjust:100%}
+ body{font-family:Poppins,system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:var(--fundo);color:var(--texto);
+      font-size:17px;line-height:1.45;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;
+      font-variant-numeric:tabular-nums;caret-color:var(--azul);-webkit-tap-highlight-color:transparent}
+ button,input{font:inherit;color:inherit}
+ :focus-visible{outline:3px solid var(--azul);outline-offset:3px}
+ svg.ic{width:1.15em;height:1.15em;flex:none;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+
+ /* Barra do topo: grafite de dia e de noite, como no painel */
+ .cabeca{background:var(--topo);color:#F6F7FA;padding:10px 16px;padding-top:calc(10px + env(safe-area-inset-top));
+         display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:1000}
+ .marca{font-weight:700;font-size:1rem;letter-spacing:-.01em}
+ .marca b{color:var(--azul);font-weight:700}
+ .cabeca .nome{flex:1;min-width:0;font-weight:600;color:#A2A5B3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .pilula{font-size:.84rem;font-weight:600;padding:5px 13px;border-radius:999px;white-space:nowrap;background:#343442;color:#F6F7FA}
+ .pilula:empty{display:none}
+ .pilula.rota{background:#1877BE}
+ .pilula.livre{background:rgba(73,201,154,.18);color:#49C99A}
+ .pilula.retirar{background:#F6F7FA;color:#1C1B26}
+ .pilula.fora{background:#343442;color:#A2A5B3}
+
+ /* Avisos que não podem passar despercebidos */
+ .aviso{padding:14px 16px;font-weight:600;display:flex;align-items:center;gap:12px;font-size:1rem;line-height:1.35}
+ .aviso > span{flex:1}
+ /* Cancelado como carimbo: o selo com o mesmo contorno grosso do complemento, o detalhe embaixo */
+ .aviso .selo{display:inline-block;border:3px solid currentColor;border-radius:8px;padding:1px 9px;font-weight:700;font-size:1.05rem;margin-bottom:4px;white-space:nowrap}
+ .aviso .det{display:block;font-size:.9rem;font-weight:500;line-height:1.3}
+ .aviso.cancelado{padding-top:10px;padding-bottom:10px}
+ .aviso.cancelado{background:var(--atraso);color:var(--atraso-texto)}
+ .aviso.novo{background:var(--botao);color:#fff}
+ .aviso button{background:#fff;color:#1C1B26;border:0;border-radius:999px;padding:0 20px;min-height:48px;font-weight:700;flex-shrink:0;cursor:pointer}
+ .aviso .ic{width:1.5em;height:1.5em}
+
+ /* Metade de cima: só leitura */
+ main{flex:1;width:100%;max-width:560px;margin:0 auto;padding:16px 18px 8px}
+ .faixa{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-weight:600;color:var(--suave)}
+ .faixa .rot{color:var(--texto);font-size:1.05rem}
+ .rot{font-size:.95rem;font-weight:600;color:var(--suave)}
+ .grande{font-size:clamp(1.85rem,8.2vw,2.3rem);font-weight:700;line-height:1.14;letter-spacing:-.015em;margin:8px 0 0;text-wrap:balance}
+ .destaque{margin-top:14px;border:3px solid var(--texto);border-radius:12px;padding:10px 14px;font-weight:700;font-size:1.22rem;line-height:1.28}
+ .meio{font-size:1.06rem;margin:12px 0 0;font-weight:500}
+ .bairro{font-size:1.06rem;margin-top:4px;font-weight:500;color:var(--suave)}
+ .meio .suave{font-size:inherit}
+ .suave{color:var(--suave);font-size:.95rem}
+ .bloco{margin-top:26px;padding-top:16px;border-top:1px solid var(--linha)}
+ .bloco .rot{margin-bottom:6px}
+ .depois{list-style:none;margin:0;padding:0}
+ .depois li{display:flex;gap:12px;padding:9px 0;font-weight:500;align-items:baseline}
+ .depois .n{flex:0 0 26px;font-weight:700;color:var(--suave)}
+ .volta{display:flex;gap:10px;align-items:center;margin-top:8px}
+
+ /* Rota planejada: as paradas em ordem */
+ .passos{list-style:none;margin:12px 0 0;padding:0;position:relative}
+ .passos li{display:flex;gap:14px;padding:12px 0;position:relative}
+ .passos li:not(:last-child)::before{content:"";position:absolute;left:19px;top:52px;bottom:-12px;width:3px;background:var(--linha);border-radius:2px}
+ .bola{flex:0 0 40px;height:40px;border-radius:50%;background:var(--botao);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;position:relative}
+ .bola.rest{background:var(--tinta);color:var(--tinta-texto);border-radius:10px}
+ .passos .info{flex:1;min-width:0;padding-top:7px}
+ .passos .titulo{font-weight:700;font-size:1.08rem;line-height:1.3}
+ .passos .end{font-weight:500;margin-top:2px}
+ .passos a.nav{display:inline-flex;align-items:center;gap:8px;margin-top:10px;min-height:56px;padding:0 22px;border-radius:999px;
+               background:var(--campo);color:var(--texto);font-weight:600;text-decoration:none;font-size:.98rem}
+
+ /* Sem entregas: a situação do motoboy, grande */
+ .estado{text-align:center;padding:36px 8px 12px}
+ .estado .sinal{width:88px;height:88px;border-radius:50%;margin:0 auto 18px;display:flex;align-items:center;justify-content:center;
+                background:var(--campo);color:var(--suave)}
+ .estado .sinal.ok{background:rgba(73,201,154,.2);color:var(--ok)}
+ .estado .sinal .ic{width:44px;height:44px;stroke-width:2.4}
+ .estado .grande{text-align:center;margin-top:0}
+ .estado .meio,.estado .suave{text-align:center;margin-top:10px}
+
+ /* Placa do polegar: todos os botões ficam aqui embaixo */
+ .rodape{position:sticky;bottom:0;z-index:900;width:100%;background:var(--placa);border-radius:22px 22px 0 0;
+         box-shadow:0 -6px 24px var(--sombra);padding:14px 14px calc(14px + env(safe-area-inset-bottom))}
+ .rodape .pilha{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+ .botao{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;border:0;border-radius:18px;padding:12px 16px;
+        min-height:clamp(64px,9.5dvh,84px);font-size:1.22rem;font-weight:700;letter-spacing:.01em;color:#fff;
+        text-align:center;text-decoration:none;cursor:pointer;position:relative;overflow:hidden;
+        transition:background-color .15s,transform .15s}
+ .botao:active{transform:scale(.985)}
+ .botao:disabled{opacity:.6;cursor:default}
+ .botao .ic{width:1.3em;height:1.3em}
+ .azul{background:var(--botao)} .azul:hover{background:var(--botao-forte)}
+ .tinta{background:var(--tinta);color:var(--tinta-texto)}
+ .claro{background:var(--campo);color:var(--texto)}
+ .baixo{min-height:56px;font-size:1.05rem;font-weight:600}
+ .entreguei{min-height:clamp(76px,12dvh,104px);font-size:1.38rem}
+ /* 1º toque arma a confirmação: a barra embaixo esvazia nos 4 segundos que ele tem para o 2º toque */
+ .confirmando{background:var(--placa);color:var(--texto);box-shadow:inset 0 0 0 4px var(--texto);font-size:1.12rem}
+ .confirmando .ic{display:none}
+ .confirmando::after{content:"";position:absolute;left:4px;right:4px;bottom:4px;height:14px;background:var(--botao);
+                     border-radius:0 0 14px 14px;transform-origin:left;animation:esvaziar 4s linear forwards}
+ @keyframes esvaziar{to{transform:scaleX(0)}}
+ /* Sem animação contínua: a barra encolhe em 4 degraus (um por segundo), para o prazo continuar visível */
+ @media (prefers-reduced-motion:reduce){ .confirmando::after{animation-timing-function:steps(4,end)} .botao{transition:none} .botao:active{transform:none} }
+
+ .linkzinho{display:inline-flex;align-items:center;gap:8px;background:none;border:0;color:var(--texto);font-weight:600;
+            min-height:48px;padding:0;margin-top:14px;cursor:pointer;text-decoration:underline;text-underline-offset:5px;text-decoration-thickness:2px}
+
+ /* Login */
+ #login .grande{margin-bottom:6px}
+ #login input{display:block;width:100%;padding:0 16px;min-height:56px;border-radius:12px;border:2px solid var(--linha);background:var(--placa);
+              margin-top:12px;font-size:1.05rem}
+ #login input::placeholder{color:var(--suave);opacity:1}
+ #login input:focus{border-color:var(--azul);outline:none;box-shadow:0 0 0 3px rgba(40,155,239,.25)}
+ #login .botao{margin-top:16px}
+ #msgLogin:empty{display:none}
+
+ /* Mapa */
+ #mapaBox{margin-top:18px}
+ #mapa{height:clamp(240px,38dvh,340px);border-radius:16px;background:var(--campo)}
+ .leaflet-container{font-family:Poppins,system-ui,sans-serif}
+ @media (prefers-color-scheme:dark){
+  #mapa .leaflet-tile-pane{filter:invert(1) hue-rotate(200deg) brightness(.82) contrast(.88) saturate(.55)}
+ }
+ .pino{min-width:30px;height:30px;padding:0 7px;border-radius:15px;color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;
+       justify-content:center;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4);background:#1877BE}
+ .pino.rest{background:#1C1B26;border-radius:8px} .pino.eu{background:#289BEF} .pino.depois{background:#8A8EA0}
+ #rodapeInfo{text-align:center;padding:14px 0 6px}
+ #rodapeInfo:empty{display:none}
 </style>
 </head>
 <body>
-<div class="cabeca"><span class="nome" id="nomeTopo">🛵</span><span class="pilula" id="pilula"></span></div>
-<div id="avisos"></div>
+<div class="cabeca"><span class="marca">entrega<b>AI</b></span><span class="nome" id="nomeTopo"></span><span class="pilula" id="pilula"></span></div>
+<div id="avisos" aria-live="assertive"></div>
 <main>
- <div id="login" class="cartao" style="display:none">
+ <div id="login" style="display:none">
   <div class="grande">Entrar</div>
   <div class="suave">Use o link que o restaurante mandou. Se não tiver, digite seu nome e código:</div>
-  <input id="nome" placeholder="Seu nome (igual ao cadastro)" autocomplete="username">
-  <input id="codigo" type="password" placeholder="Código" autocomplete="current-password">
-  <button class="botao verde" id="entrar">Entrar</button>
-  <div id="msgLogin" class="suave" style="margin-top:8px"></div>
+  <input id="nome" placeholder="Seu nome (igual ao cadastro)" autocomplete="username" aria-label="Seu nome">
+  <input id="codigo" type="password" placeholder="Código" autocomplete="current-password" aria-label="Código">
+  <button class="botao tinta" id="entrar">Entrar</button>
+  <div id="msgLogin" class="suave" role="alert" style="margin-top:12px"></div>
  </div>
  <div id="tela"></div>
  <div id="mapaBox" style="display:none"><div id="mapa"></div></div>
- <div class="suave" id="rodapeInfo" style="text-align:center;padding:6px 0 18px"></div>
+ <div class="suave" id="rodapeInfo"></div>
 </main>
 <div class="rodape" id="rodape" style="display:none"></div>
 
@@ -82,8 +175,36 @@
 /*__CONFIG__*/
 const $ = (i) => document.getElementById(i);
 const el = (tag, props, ...filhos) => { const e = Object.assign(document.createElement(tag), props || {}); e.append(...filhos.filter((f) => f !== null && f !== undefined)); return e; };
+// Como o append, mas pula os itens vazios (ex.: complemento que o pedido não tem).
+const anexar = (pai, ...filhos) => pai.append(...filhos.filter((f) => f !== null && f !== undefined));
 function ler(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function guardar(k, v) { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} }
+
+// Ícones desenhados (traço único), no lugar de emojis.
+const ICONES = {
+  mapa: '<path d="M3 11l18-8-8 18-2-8z"/>',
+  telefone: '<path d="M5 3h4l2 5-2.5 1.5a11 11 0 0 0 6 6L16 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 5a2 2 0 0 1 2-2"/>',
+  check: '<path d="M4 12.5l5 5L20 6.5"/>',
+  pacote: '<path d="M3 7.5L12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5l9 4.5 9-4.5M12 12v9"/>',
+  x: '<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>',
+  pausa: '<path d="M9 6v12M15 6v12"/>',
+  sinal: '<circle cx="12" cy="12" r="2.5"/><path d="M7.5 7.5a6.4 6.4 0 0 0 0 9M16.5 7.5a6.4 6.4 0 0 1 0 9M4.6 4.6a10.5 10.5 0 0 0 0 14.8M19.4 4.6a10.5 10.5 0 0 1 0 14.8"/>',
+  volta: '<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+  rota: '<path d="M6 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/><path d="M8 17h8a3 3 0 0 0 0-6H8a3 3 0 0 1 0-6h8"/>',
+};
+function icone(nome) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("class", "ic"); s.setAttribute("aria-hidden", "true");
+  s.innerHTML = ICONES[nome];
+  return s;
+}
+// Botão (ou link) com ícone e texto. O texto fica num <span> para poder trocar sem perder o ícone.
+function botao(tag, classe, nomeIcone, texto, props) {
+  const rotulo = el("span", {textContent: texto});
+  const b = el(tag, Object.assign({className: "botao " + classe}, props || {}), nomeIcone ? icone(nomeIcone) : null, rotulo);
+  b.rotulo = rotulo;
+  return b;
+}
 
 // ---------------------------------------------------------------------
 // Acesso. O link do motoboy é /m/NOME#codigo=CODIGO (links antigos /motoboy?id=NOME
@@ -101,7 +222,7 @@ if (!codigo && id) codigo = ler("codigo:" + id) || "";
 const enderecoLimpo = id ? "/m/" + encodeURIComponent(id) : location.pathname;
 if (location.hash || qs.has("codigo") || (id && !pelaRota)) history.replaceState(null, "", enderecoLimpo);
 if (id) {
-  $("nomeTopo").textContent = "🛵 " + id;
+  $("nomeTopo").textContent = id;
   // "Adicionar à tela inicial" abre direto a rota dele.
   document.head.append(el("link", {rel: "manifest", href: "/m/" + encodeURIComponent(id) + "/app.webmanifest"}));
 }
@@ -117,6 +238,7 @@ $("entrar").onclick = () => {
   guardar("codigo:" + n, c);
   location.href = "/m/" + encodeURIComponent(n);
 };
+$("codigo").addEventListener("keydown", (e) => { if (e.key === "Enter") $("entrar").click(); });
 
 async function chamar(caminho, metodo, corpo) {
   const resp = await fetch(caminho, {method: metodo || "GET", headers: {"X-Codigo": codigo, "Content-Type": "application/json"},
@@ -159,11 +281,12 @@ function desenharAvisos(cancelados) {
       vistos.add(c.id); guardar(chaveVistos, JSON.stringify([...vistos].slice(-50))); desenharAvisos(cancelados);
     }});
     caixa.append(el("div", {className: "aviso cancelado"},
-      el("span", {textContent: "❌ PEDIDO " + c.rotulo + " CANCELADO — " + c.endereco + ". Não entregue. Se já estiver com a comida, fale com o restaurante."}), b));
+      el("span", {}, el("span", {className: "selo", textContent: "PEDIDO " + c.rotulo + " CANCELADO"}),
+        el("span", {className: "det", textContent: c.endereco + ". Não entregue. Se já estiver com a comida, fale com o restaurante."})), b));
     if (!jaVibrou.has(c.id)) { jaVibrou.add(c.id); apitar(); }
   });
   if (avisoNovo) {
-    caixa.append(el("div", {className: "aviso novo"}, el("span", {textContent: avisoNovo}),
+    caixa.append(el("div", {className: "aviso novo"}, icone("pacote"), el("span", {textContent: avisoNovo}),
                     el("button", {textContent: "OK", onclick: () => { avisoNovo = null; desenharAvisos(cancelados); }})));
   }
 }
@@ -172,7 +295,7 @@ function desenharAvisos(cancelados) {
 // Mapa (aparece na rota planejada e quando ele toca em "Ver mapa")
 // ---------------------------------------------------------------------
 let mapa = null, camada = null, verMapa = false;
-function pinIcone(texto, classe, largura) { return L.divIcon({className: "", html: '<div class="pino ' + (classe || "") + '">' + texto + "</div>", iconSize: [largura || 28, 28]}); }
+function pinIcone(texto, classe, largura) { return L.divIcon({className: "", html: '<div class="pino ' + (classe || "") + '">' + texto + "</div>", iconSize: [largura || 30, 30]}); }
 function desenharMapa(d) {
   if (typeof L === "undefined") return;
   if (!mapa) {
@@ -189,16 +312,17 @@ function desenharMapa(d) {
     L.marker([p.lat, p.lng], {icon: pinIcone(i + 1, p.saiu || !d.paradas[0].saiu ? "" : "depois")}).addTo(camada);
   });
   const linha = (d.trajeto && d.trajeto.length > 1) ? d.trajeto : pontos;
-  L.polyline(linha, {color: "#2563eb", weight: 5, opacity: .8}).addTo(camada);
+  L.polyline(linha, {color: "#1877BE", weight: 5, opacity: .85}).addTo(camada);
   if (d.gps) {
-    L.marker([d.gps.lat, d.gps.lng], {icon: pinIcone("Você", "eu", 52), zIndexOffset: 500}).addTo(camada);
+    L.marker([d.gps.lat, d.gps.lng], {icon: pinIcone("Você", "eu", 54), zIndexOffset: 500}).addTo(camada);
     pontos.push([d.gps.lat, d.gps.lng]);
   }
   if (pontos.length > 1) mapa.fitBounds(pontos, {padding: [30, 30], maxZoom: 16});
 }
 
 // ---------------------------------------------------------------------
-// Telas
+// Telas. Cada tela escreve a leitura em "tela" (metade de cima) e os botões
+// em "pilha", dentro da placa do rodapé (metade de baixo, onde fica o polegar).
 // ---------------------------------------------------------------------
 const mapsAte = (p) => "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(p.endereco);
 const mapsRota = (ps) => "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(ps[ps.length - 1].endereco) +
@@ -208,19 +332,20 @@ const plural = (n, um, varios) => n + " " + (n === 1 ? um : varios);
 
 // Botão "Entreguei" com toque duplo: o 1º toque pede confirmação (evita marcar sem querer na rua).
 function botaoEntreguei(p) {
-  const b = el("button", {className: "botao verde", textContent: "✓ ENTREGUEI"});
+  const b = botao("button", "tinta entreguei", "check", "ENTREGUEI");
   let armado = null;
+  const desarmar = () => { armado = null; b.rotulo.textContent = "ENTREGUEI"; b.classList.remove("confirmando"); };
   b.onclick = async () => {
     if (!armado) {
-      b.textContent = "Toque de novo para confirmar"; b.classList.add("confirmando");
-      armado = setTimeout(() => { armado = null; b.textContent = "✓ ENTREGUEI"; b.classList.remove("confirmando"); }, 4000);
+      b.rotulo.textContent = "Toque de novo para confirmar"; b.classList.add("confirmando");
+      armado = setTimeout(desarmar, 4000);
       return;
     }
-    clearTimeout(armado); b.disabled = true; b.textContent = "Registrando...";
+    clearTimeout(armado); b.disabled = true; b.rotulo.textContent = "Registrando..."; b.classList.remove("confirmando");
     try {
       const resp = await chamar("/rotas/" + encodeURIComponent(id) + "/entregar/" + encodeURIComponent(p.id), "POST");
       if (!resp.ok && resp.status !== 404) throw new Error();
-    } catch (e) { alert("Não consegui registrar. Confira a internet e tente de novo."); b.disabled = false; armado = null; b.textContent = "✓ ENTREGUEI"; b.classList.remove("confirmando"); return; }
+    } catch (e) { alert("Não consegui registrar. Confira a internet e tente de novo."); b.disabled = false; desarmar(); return; }
     ultimo = ""; atualizar();
   };
   return b;
@@ -235,72 +360,79 @@ async function mudarDisponivel(ativo, botao) {
   perguntar = false; ultimo = ""; atualizar();
 }
 
+function estado(nomeIcone, classe, titulo, ...textos) {
+  return el("div", {className: "estado"},
+    el("div", {className: "sinal " + (classe || "")}, icone(nomeIcone)),
+    el("div", {className: "grande", textContent: titulo}), ...textos);
+}
+
 let perguntar = false;   // "Você está disponível para outra rota?" depois de terminar
-function telaSemEntregas(d, tela, rodape) {
+function telaSemEntregas(d, tela, pilha) {
   if (perguntar && d.ativo) {
-    const sim = el("button", {className: "botao verde", textContent: "SIM, ESTOU DISPONÍVEL"});
-    const nao = el("button", {className: "botao claro", textContent: "NÃO, ENCERRAR TURNO"});
+    const sim = botao("button", "tinta", "check", "SIM, ESTOU DISPONÍVEL");
+    const nao = botao("button", "claro baixo", null, "NÃO, ENCERRAR TURNO");
     sim.onclick = () => mudarDisponivel(true, sim);
     nao.onclick = () => mudarDisponivel(false, nao);
-    tela.append(el("div", {className: "cartao"}, el("div", {className: "grande-icone", textContent: "✅"}),
-      el("div", {className: "grande", style: "text-align:center", textContent: "Rota concluída!"}),
-      el("div", {className: "meio", style: "text-align:center", textContent: "Você está disponível para outra rota?"}), sim, nao));
+    tela.append(estado("check", "ok", "Rota concluída!", el("div", {className: "meio", textContent: "Você está disponível para outra rota?"})));
+    pilha.append(sim, nao);
     return;
   }
   if (d.ativo) {
-    const sair = el("button", {className: "botao claro", textContent: "Encerrar meu turno"});
+    const sair = botao("button", "claro baixo", null, "Encerrar meu turno");
     sair.onclick = () => { if (confirm("Encerrar o turno? Você para de receber rotas.")) mudarDisponivel(false, sair); };
-    tela.append(el("div", {className: "cartao"}, el("div", {className: "grande-icone", textContent: "🟢"}),
-      el("div", {className: "grande", style: "text-align:center", textContent: "Você está disponível"}),
-      el("div", {className: "suave", style: "text-align:center", textContent: "Quando chegar uma rota, esta tela apita e vibra. Deixe ela aberta."}), sair));
+    tela.append(estado("sinal", "ok", "Você está disponível",
+      el("div", {className: "suave", textContent: "Quando chegar uma rota, esta tela apita e vibra. Deixe ela aberta."})));
+    pilha.append(sair);
   } else {
-    const entrar = el("button", {className: "botao verde", textContent: "🟢 ESTOU DISPONÍVEL"});
+    const entrar = botao("button", "tinta", "sinal", "ESTOU DISPONÍVEL");
     entrar.onclick = () => mudarDisponivel(true, entrar);
-    tela.append(el("div", {className: "cartao"}, el("div", {className: "grande-icone", textContent: "⏸️"}),
-      el("div", {className: "grande", style: "text-align:center", textContent: "Você está fora de turno"}),
-      el("div", {className: "suave", style: "text-align:center", textContent: "Toque abaixo para começar a receber rotas."})));
-    rodape.append(entrar);
+    tela.append(estado("pausa", "", "Você está fora de turno",
+      el("div", {className: "suave", textContent: "Toque abaixo para começar a receber rotas."})));
+    pilha.append(entrar);
   }
 }
 
 // Rota planejada: ainda no restaurante. Mostra o caminho todo e o botão INICIAR ROTA.
-function telaRotaPlanejada(d, tela, rodape) {
+function telaRotaPlanejada(d, tela, pilha) {
   const viagem = d.paradas[0].viagem;
   const desta = d.paradas.filter((p) => !p.saiu && (p.viagem === viagem || !viagem));
   const depois = d.paradas.length - desta.length;
   const passos = el("ul", {className: "passos"});
   passos.append(el("li", {}, el("span", {className: "bola rest", textContent: "R"}),
     el("div", {className: "info"}, el("div", {className: "titulo", textContent: "Restaurante"}),
-      el("div", {textContent: "📦 Retirar " + desta.map((p) => p.rotulo).join(", ")}))));
+      el("div", {className: "end", textContent: "Retirar " + desta.map((p) => p.rotulo).join(", ")}))));
   desta.forEach((p, i) => {
     passos.append(el("li", {}, el("span", {className: "bola", textContent: String(i + 1)}),
       el("div", {className: "info"},
         el("div", {className: "titulo", textContent: quem(p) + (p.cliente ? " · " + p.rotulo : "")}),
-        el("div", {textContent: "📍 " + p.endereco}),
+        el("div", {className: "end", textContent: p.endereco}),
         p.complemento ? el("div", {className: "suave", textContent: p.complemento}) : null,
-        el("div", {className: "suave", textContent: "⏱️ ~" + p.minutos + " min" + (i ? " desde a anterior" : " do restaurante")}),
-        el("a", {className: "nav", href: mapsAte(p), target: "_blank", rel: "noopener", textContent: "Navegar até aqui"}))));
+        el("div", {className: "suave", textContent: "~" + p.minutos + " min" + (i ? " desde a anterior" : " do restaurante")}),
+        el("a", {className: "nav", href: mapsAte(p), target: "_blank", rel: "noopener"}, icone("mapa"), "Navegar até aqui"))));
   });
   const total = desta.reduce((s, p) => s + p.minutos, 0);
-  tela.append(el("div", {className: "cartao"},
-    el("div", {className: "rot", textContent: "Sua rota — " + plural(desta.length, "entrega", "entregas") + " · ~" + total + " min"}), passos,
-    depois ? el("div", {className: "suave", textContent: "Depois desta saída: mais " + plural(depois, "entrega", "entregas") + " (volte ao restaurante para pegar)."}) : null));
-  const iniciar = el("button", {className: "botao verde", textContent: "🟢 INICIAR ROTA"});
+  anexar(tela,
+    el("div", {className: "faixa"}, el("span", {className: "rot", textContent: "Sua rota — " + plural(desta.length, "entrega", "entregas")}),
+       el("span", {textContent: "~" + total + " min"})),
+    passos,
+    depois ? el("div", {className: "volta suave"}, icone("volta"),
+               el("span", {textContent: "Depois desta saída: mais " + plural(depois, "entrega", "entregas") + " (volte ao restaurante para pegar)."})) : null);
+  const iniciar = botao("button", "tinta", "rota", "INICIAR ROTA");
   iniciar.onclick = async () => {
-    iniciar.disabled = true; iniciar.textContent = "Iniciando...";
+    iniciar.disabled = true; iniciar.rotulo.textContent = "Iniciando...";
     try {
       const resp = await chamar("/rotas/" + encodeURIComponent(id) + "/saiu", "POST");
       if (!resp.ok && resp.status !== 404) throw new Error();
       guardar("total:" + (viagem || "rota"), String(desta.length));
-    } catch (e) { alert("Não consegui iniciar. Confira a internet e tente de novo."); iniciar.disabled = false; iniciar.textContent = "🟢 INICIAR ROTA"; return; }
+    } catch (e) { alert("Não consegui iniciar. Confira a internet e tente de novo."); iniciar.disabled = false; iniciar.rotulo.textContent = "INICIAR ROTA"; return; }
     pedirGps(); ultimo = ""; atualizar();
   };
-  rodape.append(iniciar);
+  pilha.append(iniciar);
   return true;  // mostra o mapa
 }
 
-// Em rota: uma entrega por vez.
-function telaEntrega(d, tela) {
+// Em rota: uma entrega por vez. Em cima o endereço; embaixo MAPS, Ligar e ENTREGUEI.
+function telaEntrega(d, tela, pilha) {
   const naRua = d.paradas.filter((p) => p.saiu);
   const p = naRua[0];
   const chave = "total:" + (p.viagem || "rota");
@@ -308,28 +440,34 @@ function telaEntrega(d, tela) {
   guardar(chave, String(total));
   const n = total - naRua.length + 1;
   const telefone = (p.telefone || "").replace(/\D/g, "");
-  const cartao = el("div", {className: "cartao"},
-    el("div", {className: "rot", textContent: "Entrega " + n + " de " + total}),
-    el("div", {className: "grande", textContent: "📍 " + p.endereco}),
+  // Rua e número em letra grande; bairro e cidade numa linha menor logo abaixo (mesmo texto, dividido).
+  const corte = p.endereco.indexOf(" - ");
+  const rua = corte > 0 ? p.endereco.slice(0, corte) : p.endereco, bairro = corte > 0 ? p.endereco.slice(corte + 3) : "";
+  anexar(tela,
+    el("div", {className: "faixa"}, el("span", {className: "rot", textContent: "Entrega " + n + " de " + total}),
+       el("span", {textContent: "~" + p.minutos + " min até lá"})),
+    el("div", {className: "grande", textContent: rua}),
+    bairro ? el("div", {className: "bairro", textContent: bairro}) : null,
     p.complemento ? el("div", {className: "destaque", textContent: p.complemento}) : null,
     p.referencia ? el("div", {className: "meio", textContent: "Ref.: " + p.referencia}) : null,
-    el("div", {className: "meio", textContent: (p.cliente ? "👤 " + p.cliente + " · " : "") + "Pedido " + p.rotulo}),
-    el("div", {className: "suave", textContent: "⏱️ ~" + p.minutos + " min até lá"}),
-    el("a", {className: "botao azul", href: mapsAte(p), target: "_blank", rel: "noopener", textContent: "🗺️ ABRIR NO MAPS"}),
-    telefone.length >= 10 ? el("a", {className: "botao claro", href: "tel:+55" + telefone, textContent: "📞 Ligar para o cliente"}) : null,
-    botaoEntreguei(p));
-  tela.append(cartao);
+    el("div", {className: "meio"}, p.cliente ? p.cliente + " " : null,
+       el("span", {className: "suave", textContent: (p.cliente ? "· " : "") + "Pedido " + p.rotulo})));
   const proximas = naRua.slice(1);
   const depois = d.paradas.length - naRua.length;
   if (proximas.length || depois) {
-    const lista = el("div", {className: "cartao"}, el("div", {className: "rot", textContent: "Depois"}));
-    proximas.forEach((q, i) => lista.append(el("div", {className: "meio", textContent: (n + i + 1) + ". " + q.endereco + (q.cliente ? " — " + q.cliente : "")})));
-    if (depois) lista.append(el("div", {className: "suave", textContent: "↩ Volte ao restaurante para pegar mais " + plural(depois, "entrega", "entregas") + "."}));
-    tela.append(lista);
+    const lista = el("ul", {className: "depois"});
+    proximas.forEach((q, i) => lista.append(el("li", {}, el("span", {className: "n", textContent: String(n + i + 1)}),
+      el("span", {textContent: q.endereco + (q.cliente ? " — " + q.cliente : "")}))));
+    tela.append(el("div", {className: "bloco"}, el("div", {className: "rot", textContent: "Depois"}), lista,
+      depois ? el("div", {className: "volta suave"}, icone("volta"),
+                 el("span", {textContent: "Volte ao restaurante para pegar mais " + plural(depois, "entrega", "entregas") + "."})) : null));
   }
-  const alternar = el("button", {className: "linkzinho", textContent: verMapa ? "Esconder mapa" : "Ver mapa da rota"});
+  const alternar = el("button", {className: "linkzinho"}, icone("mapa"), verMapa ? "Esconder mapa" : "Ver mapa da rota");
   alternar.onclick = () => { verMapa = !verMapa; ultimo = ""; atualizar(); };
   tela.append(alternar);
+  pilha.append(botao("a", "azul", "mapa", "ABRIR NO MAPS", {href: mapsAte(p), target: "_blank", rel: "noopener"}));
+  if (telefone.length >= 10) pilha.append(botao("a", "claro baixo", "telefone", "Ligar para o cliente", {href: "tel:+55" + telefone}));
+  pilha.append(botaoEntreguei(p));
   return verMapa;
 }
 
@@ -341,7 +479,7 @@ function desenhar(d) {
   if (idsConhecidos) {
     const novos = d.paradas.filter((p) => !idsConhecidos.has(p.id));
     if (novos.length) {
-      avisoNovo = "📦 " + (novos.length === 1 ? "Nova entrega: " : "Novas entregas: ") + novos.map((p) => p.rotulo).join(", ");
+      avisoNovo = (novos.length === 1 ? "Nova entrega: " : "Novas entregas: ") + novos.map((p) => p.rotulo).join(", ");
       apitar();
       // Some sozinho depois de 1 minuto.
       clearTimeout(window.tempoAviso);
@@ -358,19 +496,20 @@ function desenhar(d) {
 
   const emRota = d.paradas.length && d.paradas[0].saiu;
   const pil = $("pilula");
-  pil.className = "pilula " + (emRota ? "rota" : d.ativo ? "livre" : "fora");
-  pil.textContent = emRota ? "🚴 Em rota" : d.paradas.length ? "📦 Retirar pedidos" : d.ativo ? "🟢 Disponível" : "⚪ Fora de turno";
+  pil.className = "pilula " + (emRota ? "rota" : d.paradas.length ? "retirar" : d.ativo ? "livre" : "fora");
+  pil.textContent = emRota ? "Em rota" : d.paradas.length ? "Retirar pedidos" : d.ativo ? "Disponível" : "Fora de turno";
 
-  const tela = $("tela"), rodape = $("rodape");
+  const tela = $("tela"), rodape = $("rodape"), pilha = el("div", {className: "pilha"});
   tela.innerHTML = ""; rodape.innerHTML = "";
   let comMapa = false;
-  if (!d.paradas.length) telaSemEntregas(d, tela, rodape);
-  else if (!emRota) comMapa = telaRotaPlanejada(d, tela, rodape);
-  else comMapa = telaEntrega(d, tela);
-  rodape.style.display = rodape.childNodes.length ? "block" : "none";
+  if (!d.paradas.length) telaSemEntregas(d, tela, pilha);
+  else if (!emRota) comMapa = telaRotaPlanejada(d, tela, pilha);
+  else comMapa = telaEntrega(d, tela, pilha);
+  if (pilha.childNodes.length) rodape.append(pilha);
+  rodape.style.display = pilha.childNodes.length ? "block" : "none";
   $("mapaBox").style.display = comMapa ? "block" : "none";
   if (comMapa) desenharMapa(d);
-  $("rodapeInfo").textContent = "Hoje: " + plural(d.hoje.entregas, "entrega", "entregas") + (gpsLigado ? " · 📍 localização ligada" : "");
+  $("rodapeInfo").textContent = "Hoje: " + plural(d.hoje.entregas, "entrega", "entregas") + (gpsLigado ? " · localização ligada" : "");
   vigiarPosicao(emRota);
 }
 
@@ -412,7 +551,7 @@ async function atualizar() {
     }
     const texto = await resp.text();
     if (texto !== ultimo) { ultimo = texto; desenhar(JSON.parse(texto)); }
-  } catch (e) { ultimo = ""; $("rodapeInfo").textContent = "⚠ Sem conexão. Tentando de novo..."; }
+  } catch (e) { ultimo = ""; $("rodapeInfo").textContent = "Sem conexão. Tentando de novo..."; }
 }
 atualizar(); setInterval(atualizar, 5000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { ultimo = ""; atualizar(); } });
