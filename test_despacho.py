@@ -568,6 +568,7 @@ def test_ajustes_salvam_e_validam(api):
     assert r.json()["ajustes"]["modo"] == "assistido" and r.json()["ajustes"]["max_paradas"] == 3
     assert api.put("/ajustes", json={"modo": "qualquer"}, headers=CHAVE).status_code == 422
     assert api.put("/ajustes", json={"max_paradas": 0}, headers=CHAVE).status_code == 422
+    assert api.put("/ajustes", json={"atraso_max_agrupar_min": 61}, headers=CHAVE).status_code == 422
 
 
 def test_max_paradas_dos_ajustes_divide_as_viagens(api):
@@ -804,6 +805,43 @@ def test_distancia_de_agrupamento_ajustavel(api):
     r = api.post("/despachar/previa", headers=CHAVE).json()
     assert r["agrupou"] is False and r["viagens"] == 2
     assert all(not p["agrupar_com"] for p in api.get("/pedidos", headers=CHAVE).json()["pedidos"])
+
+
+def test_com_motoboy_livre_nao_junta_se_atrasa_o_cliente(api):
+    """Com a tolerância em 0, dois pedidos vizinhos vão com os dois motoboys livres,
+    e a sugestão explica por que não foram juntos."""
+    api.put("/ajustes", json={"atraso_max_agrupar_min": 0}, headers=CHAVE)
+    novo_motoboy(api, "Carlos")
+    novo_motoboy(api, "Ana")
+    a = novo_pedido(api, lat=-19.630, lng=-43.240)["rotulo"]
+    b = novo_pedido(api, lat=-19.639, lng=-43.240)["rotulo"]
+    r = api.post("/despachar/previa", headers=CHAVE).json()
+    assert r["agrupou"] is False and r["viagens"] == 2
+    motivos = [m for sg in r["sugestoes"] for m in sg["motivos"]]
+    assert any(m.startswith(f"Não foi junto com {b}") for m in motivos)
+    assert any(m.startswith(f"Não foi junto com {a}") for m in motivos)
+
+
+def test_sem_outro_motoboy_livre_continua_juntando(api):
+    api.put("/ajustes", json={"atraso_max_agrupar_min": 0}, headers=CHAVE)
+    novo_motoboy(api, "Carlos")
+    novo_pedido(api, lat=-19.630, lng=-43.240)
+    novo_pedido(api, lat=-19.639, lng=-43.240)
+    r = api.post("/despachar/previa", headers=CHAVE).json()
+    assert r["agrupou"] is True and r["viagens"] == 1
+
+
+def test_quatro_pedidos_espalhados_vao_com_os_motoboys_livres(api):
+    """Juntar os quatro faria o último cliente esperar bem mais que 10 min (o padrão).
+    O pedido do centro fica no caminho do pedido do sul, então esses dois ainda podem ir juntos."""
+    for nome in ("A", "B", "C", "D"):
+        novo_motoboy(api, nome)
+    centro = (R["lat"] + 0.03, R["lng"])
+    novo_pedido(api, lat=centro[0], lng=centro[1])
+    for dlat, dlng in ((0.017, 0), (-0.017, 0), (0, 0.017)):
+        novo_pedido(api, lat=centro[0] + dlat, lng=centro[1] + dlng)
+    rotas = api.post("/despachar", headers=CHAVE).json()["rotas"]
+    assert len(rotas) >= 3 and all(len(v) <= 2 for v in rotas.values())
 
 
 def test_economia_em_reais_e_porcentagem(api):

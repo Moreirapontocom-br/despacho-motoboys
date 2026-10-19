@@ -152,10 +152,59 @@ def estado_motoboy(base, m, abertas, ultima_entrega, agora=None):
     return {"saiu": True, "volta_s": volta, "proxima": []}
 
 
-def planejar(base, lotes, estados, max_paradas=MAX_PARADAS_VIAGEM):
+def _chegadas(base, inicio, paradas):
+    """Segundos até chegar a cada parada ({id: segundos}), saindo do restaurante
+    em 'inicio' e seguindo a melhor ordem pela linha reta."""
+    t, anterior, chegadas = inicio, base, {}
+    for p in ordenar_rota(base, list(paradas), usar_ruas=False):
+        t += custo_reta(anterior, p)
+        chegadas[p["id"]] = t
+        t += PARADA_MIN * 60
+        anterior = p
+    return chegadas
+
+
+def _copiar(sim):
+    return {mid: {**s, "viagens": [list(v) for v in s["viagens"]]} for mid, s in sim.items()}
+
+
+def _colocar(base, sim, lote, max_paradas):
+    """Dá o lote ao motoboy que termina a entrega dele mais cedo (empate: quem tem
+    menos paradas) e atualiza a simulação. Devolve (motoboy, {id: segundos até a chegada})."""
+    melhor = None
+    for mid, s in sim.items():
+        atual = s["viagens"][-1] if s["viagens"] else []
+        if len(atual) + len(lote) <= max_paradas:
+            fim = s["volta"] + tempo_viagem(base, atual + lote)
+        else:  # viagem atual cheia: este lote vai numa viagem seguinte
+            fim = s["volta"] + tempo_viagem(base, atual) + tempo_viagem(base, lote)
+        chave = (round(fim), s["total"], mid)
+        if melhor is None or chave < melhor[0]:
+            melhor = (chave, mid)
+    mid = melhor[1]
+    s = sim[mid]
+    if s["viagens"] and len(s["viagens"][-1]) + len(lote) <= max_paradas:
+        s["viagens"][-1] = s["viagens"][-1] + lote
+    else:
+        if s["viagens"]:
+            s["volta"] += tempo_viagem(base, s["viagens"][-1])
+        s["viagens"].append(list(lote))
+    s["total"] += len(lote)
+    s["recebeu"] = True
+    chegadas = _chegadas(base, s["volta"], s["viagens"][-1])
+    return mid, {p["id"]: chegadas[p["id"]] for p in lote}
+
+
+def planejar(base, lotes, estados, max_paradas=MAX_PARADAS_VIAGEM, tolerancia_s=None, separados=None):
     """Distribui os lotes de pedidos novos. estados: {motoboy_id: estado_motoboy(...)}.
     Para cada lote, escolhe o motoboy que termina a entrega dele mais cedo
     (empate: quem tem menos paradas).
+
+    Juntar pedidos economiza km, mas o último cliente da viagem espera mais. Com
+    tolerancia_s, um lote também é testado separado (cada pedido para quem entrega
+    mais cedo): se assim ele vai com mais de um motoboy e algum cliente recebe mais
+    de tolerancia_s antes, o lote é separado. Cada separação entra na lista
+    `separados` como {"ids": [...], "atraso_s": quanto o pior cliente esperaria a mais}.
 
     Devolve {motoboy_id: [viagem, viagem, ...]} só para quem recebeu pedidos novos.
     Cada viagem é uma lista de paradas que saem juntas do restaurante. Se o motoboy
@@ -165,25 +214,23 @@ def planejar(base, lotes, estados, max_paradas=MAX_PARADAS_VIAGEM):
         sim[mid] = {"volta": e["volta_s"], "viagens": [list(e["proxima"])] if e["proxima"] else [],
                     "total": len(e["proxima"]), "recebeu": False}
     for lote in lotes:
-        melhor = None
-        for mid, s in sim.items():
-            atual = s["viagens"][-1] if s["viagens"] else []
-            if len(atual) + len(lote) <= max_paradas:
-                fim = s["volta"] + tempo_viagem(base, atual + lote)
-            else:  # viagem atual cheia: este lote vai numa viagem seguinte
-                fim = s["volta"] + tempo_viagem(base, atual) + tempo_viagem(base, lote)
-            chave = (round(fim), s["total"], mid)
-            if melhor is None or chave < melhor[0]:
-                melhor = (chave, mid)
-        s = sim[melhor[1]]
-        if s["viagens"] and len(s["viagens"][-1]) + len(lote) <= max_paradas:
-            s["viagens"][-1] = s["viagens"][-1] + lote
+        if tolerancia_s is None or len(lote) < 2:
+            _colocar(base, sim, lote, max_paradas)
+            continue
+        junto = _copiar(sim)
+        _, chegada_junto = _colocar(base, junto, lote, max_paradas)
+        separado, chegada_separado, quem = _copiar(sim), {}, set()
+        for p in lote:
+            mid, chegada = _colocar(base, separado, [p], max_paradas)
+            chegada_separado.update(chegada)
+            quem.add(mid)
+        atraso = max(chegada_junto[i] - chegada_separado[i] for i in chegada_junto)
+        if len(quem) > 1 and atraso > tolerancia_s:
+            sim = separado
+            if separados is not None:
+                separados.append({"ids": [p["id"] for p in lote], "atraso_s": atraso})
         else:
-            if s["viagens"]:
-                s["volta"] += tempo_viagem(base, s["viagens"][-1])
-            s["viagens"].append(list(lote))
-        s["total"] += len(lote)
-        s["recebeu"] = True
+            sim = junto
     return {mid: s["viagens"] for mid, s in sim.items() if s["recebeu"]}
 
 

@@ -88,6 +88,7 @@ class Regras(BaseModel):
     espera_agrupamento_min: Optional[float] = Field(default=None, ge=0, le=30)
     prioridade_min: Optional[float] = Field(default=None, ge=1, le=120)
     raio_agrupamento_km: Optional[float] = Field(default=None, ge=0.3, le=10)
+    atraso_max_agrupar_min: Optional[float] = Field(default=None, ge=0, le=60)
     custo_km: Optional[float] = Field(default=None, ge=0, le=20)
 
 
@@ -307,12 +308,14 @@ def _ler_pendentes(con, rid):
         "ORDER BY criado_em, id"), {"r": rid})]
 
 
-def _planejar(base, pedidos, estados, regras):
+def _planejar(base, pedidos, estados, regras, separados=None):
     """Plano do despacho: {motoboy: [viagem, viagem...]}, cada viagem uma lista de paradas
-    (inclui as paradas antigas de quem ainda não saiu, que vão na mesma viagem)."""
+    (inclui as paradas antigas de quem ainda não saiu, que vão na mesma viagem).
+    Os grupos que foram separados para não atrasar o cliente entram em `separados`."""
     lotes = despacho.agrupar_pedidos(pedidos, raio_km=regras.get("raio_agrupamento_km") or despacho.RAIO_AGRUPAMENTO_KM,
                                      max_por_lote=min(4, regras["max_paradas"]))
-    return despacho.planejar(base, lotes, estados, regras["max_paradas"])
+    return despacho.planejar(base, lotes, estados, regras["max_paradas"],
+                             tolerancia_s=regras["atraso_max_agrupar_min"] * 60, separados=separados)
 
 
 def _plano_confirmado(plano_ids, pedidos, estados, abertas):
@@ -460,7 +463,8 @@ def previa_do_despacho(rid=Restaurante):
         if not estados:
             return {"mensagem": "Nenhum motoboy de turno agora. Ligue o turno de alguém no painel."}
         regras = ajustes.ler(con, rid)
-    plano = _planejar(base, pedidos, estados, regras)
+    separados = []
+    plano = _planejar(base, pedidos, estados, regras, separados)
     novos = {p["id"] for p in pedidos}
     sugestoes, km_com, viagens_novas = [], 0.0, 0
     for mid, viagens in plano.items():
@@ -484,6 +488,16 @@ def previa_do_despacho(rid=Restaurante):
                               "novos": sum(1 for v in saida for p in v["pedidos"] if p["novo"]),
                               "km": round(sum(v["km"] for v in saida), 1),
                               **_motivos(base, mid, viagens, estados, abertas, novos, plano)})
+    # Pedidos que estavam perto mas foram separados: diz por quê em quem levou cada um.
+    por_id = {p["id"]: p for p in pedidos}
+    for sg in sugestoes:
+        meus = {p["id"] for v in sg["viagens"] for p in v["pedidos"] if p["novo"]}
+        for sep in separados:
+            outros = [i for i in sep["ids"] if i not in meus]
+            if outros and len(outros) < len(sep["ids"]):
+                lista = ", ".join(rotulo(por_id[i].get("num"), i) for i in outros)
+                sg["motivos"].append(f"Não foi junto com {lista}: separados, um cliente recebe "
+                                     f"~{max(1, round(sep['atraso_s'] / 60))} min antes")
     km_sem = despacho.km_individual(base, pedidos)
     economia = max(km_sem - km_com, 0)
     # Nenhuma viagem junta 2 pedidos novos: cada um vai sozinho, para quem entrega mais rápido.

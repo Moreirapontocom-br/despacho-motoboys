@@ -607,6 +607,10 @@
   <div class="explica" id="exRaioGrupo"></div>
  </div>
  <div class="regra">
+  <label>Só juntar se nenhum cliente receber mais de <input id="rgAtrasoGrupo" type="number" min="0" max="60"> minutos depois</label>
+  <div class="explica" id="exAtrasoGrupo"></div>
+ </div>
+ <div class="regra">
   <label>Esperar outro pedido por até <input id="rgEspera" type="number" min="0" max="30"> minutos</label>
   <div class="explica" id="exEspera"></div>
  </div>
@@ -1682,9 +1686,12 @@ document.querySelectorAll("#seletorModo button").forEach((b) => {
 function explicarRegras() {
   const n = (i) => Number(String($(i).value).replace(",", ".")) || 0;
   const mp = n("rgMaxParadas"), rg = n("rgRaioGrupo"), es = n("rgEspera"), pr = n("rgPrioridade"), ra = n("rgRaio"), ck = n("rgCusto");
+  const ag = n("rgAtrasoGrupo");
   $("exMaxParadas").textContent = mp <= 1 ? "Cada pedido sai numa viagem só dele." :
     "O sistema tenta colocar até " + mp + " pedidos na mesma saída do motoboy.";
   $("exRaioGrupo").textContent = "Só vão juntos pedidos a até " + String(rg).replace(".", ",") + " km um do outro. Mais longe que isso, cada um segue sozinho.";
+  $("exAtrasoGrupo").textContent = ag <= 0 ? "Com outro motoboy livre, nunca junta pedidos: cada cliente recebe o mais cedo possível." :
+    "Se juntar fizer algum cliente esperar mais de " + ag + " min a mais e houver outro motoboy livre, cada pedido vai com um motoboy.";
   $("exEspera").textContent = es <= 0 ? "Pedido sozinho na região sai na hora, sem esperar." :
     "Um pedido sozinho na região pode esperar até " + es + " min por outro pedido perto, para ir junto.";
   $("exPrioridade").textContent = "Passou de " + pr + " min na fila, o pedido sai na hora, mesmo sem parceiro de viagem.";
@@ -1693,11 +1700,12 @@ function explicarRegras() {
   $("exCusto").textContent = ck <= 0 ? "Informe para ver a economia em reais (combustível, desgaste ou o que você paga por km)." :
     "Cada 10 km economizados = " + reais(ck * 10) + ".";
 }
-["rgMaxParadas", "rgRaioGrupo", "rgEspera", "rgPrioridade", "rgRaio", "rgCusto"].forEach((i) => $(i).oninput = explicarRegras);
+["rgMaxParadas", "rgRaioGrupo", "rgAtrasoGrupo", "rgEspera", "rgPrioridade", "rgRaio", "rgCusto"].forEach((i) => $(i).oninput = explicarRegras);
 $("abrirRegras").onclick = async () => {
   try {
     const a = (await api("/ajustes")).ajustes;
     $("rgMaxParadas").value = a.max_paradas; $("rgRaio").value = a.raio_max_km; $("rgRaioGrupo").value = a.raio_agrupamento_km;
+    $("rgAtrasoGrupo").value = a.atraso_max_agrupar_min;
     $("rgEspera").value = a.espera_agrupamento_min; $("rgPrioridade").value = a.prioridade_min; $("rgCusto").value = a.custo_km;
     explicarRegras();
     $("regras").style.display = "block"; dizer($("msgRegras"), "");
@@ -1708,7 +1716,7 @@ $("salvarRegras").onclick = async () => {
   const n = (i) => Number(String($(i).value).replace(",", "."));
   try {
     await api("/ajustes", "PUT", {max_paradas: n("rgMaxParadas"), raio_max_km: n("rgRaio"), raio_agrupamento_km: n("rgRaioGrupo"),
-                                  espera_agrupamento_min: n("rgEspera"), prioridade_min: n("rgPrioridade"), custo_km: n("rgCusto")});
+                                  atraso_max_agrupar_min: n("rgAtrasoGrupo"), espera_agrupamento_min: n("rgEspera"), prioridade_min: n("rgPrioridade"), custo_km: n("rgCusto")});
     dizer($("msgRegras"), "Regras salvas.", "ok"); carregarFila(); carregarEstat(true);
   } catch (err) { dizer($("msgRegras"), "Confira os números: " + err.message, "erro"); }
 };

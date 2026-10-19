@@ -51,7 +51,7 @@ rota no celular, com mapa, navegação pelo Google Maps e botão de "Entregue".
   menos e o valor em reais (informando quanto custa cada km nas regras)
 - **Regras em linguagem simples** ("Como quero que o despacho funcione"), cada uma com uma
   frase 💡 que explica o efeito do número escolhido: agrupar até N pedidos, juntar pedidos a até
-  X km um do outro, esperar outro pedido por até N min, nunca deixar um pedido esperar mais de
+  X km um do outro, só juntar se nenhum cliente receber mais de N min depois, esperar outro pedido por até N min, nunca deixar um pedido esperar mais de
   N min, limite de distância do automático e custo do km
 - **Aguardando agrupamento**: pedido sozinho na região aparece em amarelo esperando;
   pedidos que podem ir juntos mostram "Pode ir junto com #12"
@@ -99,6 +99,9 @@ não escolhe quem está mais perto do cliente, e sim **quem consegue terminar a 
 mais cedo**: o tempo até ele voltar ao restaurante mais o tempo da nova viagem.
 
 - Pedidos próximos (até 2 km entre si) são agrupados na mesma viagem.
+- Juntar economiza km, mas o último cliente da viagem espera mais. Se houver outro
+  motoboy livre e, separando, algum cliente receber mais de 10 min antes (regra
+  ajustável no painel), os pedidos vão separados. A sugestão diz quando isso acontece.
 - Se o motoboy ainda não saiu do restaurante, os pedidos novos entram na mesma
   viagem e a ordem das paradas é recalculada.
 - Se ele já saiu, os novos ficam para depois que ele voltar.

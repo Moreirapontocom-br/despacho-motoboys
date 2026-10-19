@@ -32,6 +32,9 @@ PADROES = {
     "prioridade_min": 20,
     # Pedidos a até esta distância um do outro podem ir na mesma viagem.
     "raio_agrupamento_km": 2.0,
+    # Com motoboy livre, só junta pedidos se nenhum cliente receber mais que isto
+    # depois do que receberia indo sozinho com outro motoboy.
+    "atraso_max_agrupar_min": 10,
     # Quanto custa cada km rodado (combustível, desgaste, taxa do motoboy...).
     # Usado só para mostrar a economia em reais. 0 = não mostrar em reais.
     "custo_km": 0,
@@ -39,7 +42,7 @@ PADROES = {
 
 # Limites aceitos para cada número (mínimo, máximo).
 LIMITES = {"max_paradas": (1, 10), "raio_max_km": (0, 50), "espera_agrupamento_min": (0, 30), "prioridade_min": (1, 120),
-           "raio_agrupamento_km": (0.3, 10), "custo_km": (0, 20)}
+           "raio_agrupamento_km": (0.3, 10), "atraso_max_agrupar_min": (0, 60), "custo_km": (0, 20)}
 
 
 def ler(con, rid):
